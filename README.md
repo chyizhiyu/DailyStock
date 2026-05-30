@@ -109,9 +109,8 @@ ruff check .
 
 ## GitHub 发布
 
-本机当前没有 `gh` 命令，且本会话可用的 GitHub 连接器不能直接创建新仓库。推荐先在 GitHub 创建私有空仓库 `DailyStock`，再执行：
+项目已发布到 GitHub：
 
-```bash
-git remote add origin <YOUR_PRIVATE_REPO_URL>
-git push -u origin main
-```
+- Repository: [chyizhiyu/DailyStock](https://github.com/chyizhiyu/DailyStock)
+- 默认分支：`main`
+- CI：`.github/workflows/ci.yml` 会在 push 和 pull request 时运行 `ruff` 与 `pytest`
