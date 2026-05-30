@@ -25,8 +25,9 @@ def run_hard_filters(
 
     enriched = meta.copy()
     enriched["listing_date"] = pd.to_datetime(enriched["listing_date"])
-    enriched = enriched.merge(_avg_turnover(daily_bars), on="code", how="left")
+    enriched = enriched.merge(_avg_turnover(daily_bars, as_of), on="code", how="left")
     enriched = enriched.merge(_hard_financial_flags(financials, settings), on="code", how="left")
+    enriched["effective_trade_days_30d"] = enriched["effective_trade_days_30d"].fillna(0)
     enriched["has_financial_history"] = enriched["has_financial_history"].fillna(False)
     enriched["consecutive_losses"] = enriched["consecutive_losses"].fillna(True)
     enriched["long_negative_ocf"] = enriched["long_negative_ocf"].fillna(True)
@@ -54,13 +55,19 @@ def run_hard_filters(
     )
 
 
-def _avg_turnover(daily_bars: pd.DataFrame) -> pd.DataFrame:
+def _avg_turnover(daily_bars: pd.DataFrame, as_of: date) -> pd.DataFrame:
     bars = daily_bars.copy()
+    bars["trade_date"] = pd.to_datetime(bars["trade_date"])
     bars["amount"] = pd.to_numeric(bars["amount"], errors="coerce")
+    end = pd.Timestamp(as_of)
+    start = end - pd.Timedelta(days=30)
+    bars = bars.loc[(bars["trade_date"] > start) & (bars["trade_date"] <= end)]
     return (
-        bars.groupby("code", as_index=False)["amount"]
-        .mean()
-        .rename(columns={"amount": "avg_turnover_20d"})
+        bars.groupby("code", as_index=False)
+        .agg(
+            avg_turnover_20d=("amount", "mean"),
+            effective_trade_days_30d=("trade_date", "nunique"),
+        )
     )
 
 
@@ -102,6 +109,7 @@ def _risk_screen(frame: pd.DataFrame) -> pd.Series:
         is_hk
         & ~bool_series(frame, "is_suspended")
         & ~bool_series(frame, "is_penny_stock")
+        & ~_hk_restricted_suffix(frame)
         & ~(bool_series(frame, "is_biotech_w") & ~bool_series(frame, "is_profitable_biotech", True))
     )
     return cn_ok | hk_ok
@@ -110,5 +118,19 @@ def _risk_screen(frame: pd.DataFrame) -> pd.Series:
 def _turnover_ok(frame: pd.DataFrame, settings: HardFilterSettings) -> pd.Series:
     thresholds = frame["market"].map(settings.min_avg_turnover).fillna(float("inf"))
     turnover = pd.to_numeric(frame["avg_turnover_20d"], errors="coerce")
-    return turnover >= thresholds
+    trade_days = pd.to_numeric(frame["effective_trade_days_30d"], errors="coerce").fillna(0)
+    return (trade_days >= 20) & (turnover >= thresholds)
 
+
+def _hk_restricted_suffix(frame: pd.DataFrame) -> pd.Series:
+    code = frame.get("code", pd.Series("", index=frame.index)).fillna("").astype(str).str.upper()
+    name = frame.get("name", pd.Series("", index=frame.index)).fillna("").astype(str).str.upper()
+    code_restricted = code.str.endswith(("W", "SS")) | code.str.contains(
+        r"[-_.](?:W|SS)$",
+        regex=True,
+    )
+    name_restricted = name.str.contains(
+        r"(?:^|[\s\-_.(\[])(?:W|SS)(?:[\s\-_.),\]]|$)",
+        regex=True,
+    )
+    return code_restricted | name_restricted

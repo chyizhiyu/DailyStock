@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +30,8 @@ from dailystock.models.screening import (
 from dailystock.reports.dashboard import build_dashboard
 from dailystock.reports.exporters import export_dataframe, export_json
 
+logger = logging.getLogger(__name__)
+
 
 class DailyStockPipeline:
     def __init__(
@@ -40,6 +43,12 @@ class DailyStockPipeline:
         self.provider = provider or self._build_provider(self.settings)
 
     def run(self, request: PipelineRequest) -> PipelineResult:
+        effective_dry_run = self._effective_dry_run(request)
+        if effective_dry_run != request.dry_run:
+            logger.info(
+                "[Pipeline Safety] Requested live execution was downgraded to dry-run by config."
+            )
+        request = request.model_copy(update={"dry_run": effective_dry_run})
         run_dir = self._run_dir(request)
         steps: list[StepSummary] = []
         artifacts: list[str] = []
@@ -50,10 +59,11 @@ class DailyStockPipeline:
             work=lambda: fetch_meta(self.provider, as_of=request.as_of, markets=request.markets),
         )
         self._export_frame(run_dir, "step1_meta", meta, summary, artifacts)
+        _log_step_summary("Step 1 Fetch Meta", summary)
         steps.append(summary)
 
         codes = meta["code"].tolist()
-        daily_bars = self.provider.load_daily_bars(codes, as_of=request.as_of, lookback_days=20)
+        daily_bars = self.provider.load_daily_bars(codes, as_of=request.as_of, lookback_days=30)
         hard_financials = self.provider.load_financials(codes, as_of=request.as_of)
         hard_result, summary = self._time_filter_step(
             "step2_hard_filters",
@@ -67,6 +77,7 @@ class DailyStockPipeline:
             ),
         )
         self._export_filter_result(run_dir, "step2_hard_filters", hard_result, summary, artifacts)
+        _log_step_summary("Step 2 Hard Filter", summary)
         steps.append(summary)
 
         quality_codes = hard_result.candidates["code"].tolist()
@@ -87,6 +98,7 @@ class DailyStockPipeline:
             summary,
             artifacts,
         )
+        _log_step_summary("Step 3 Financial Quality", summary)
         steps.append(summary)
 
         valuation_history = self.provider.load_valuation_history(
@@ -108,6 +120,7 @@ class DailyStockPipeline:
             ),
         )
         self._export_filter_result(run_dir, "step4_valuation", valuation_result, summary, artifacts)
+        _log_step_summary("Step 4 Valuation", summary)
         steps.append(summary)
 
         client = FutuClient(settings=self.settings.futu, dry_run=request.dry_run)
@@ -119,9 +132,12 @@ class DailyStockPipeline:
                 client=client,
                 dry_run=request.dry_run,
                 max_spread_bps=self.settings.futu.max_spread_bps,
+                max_order_notional=self.settings.futu.max_order_notional,
+                max_position_pct=self.settings.futu.max_position_pct,
             ),
         )
         self._export_execution_result(run_dir, execution_result, summary, artifacts)
+        _log_step_summary("Step 5 Futu Executor", summary)
         steps.append(summary)
 
         dashboard = build_dashboard(
@@ -157,6 +173,13 @@ class DailyStockPipeline:
         if source in {"local_db", "local-db", "duckdb", "sqlite"}:
             return LocalDbDataProvider()
         raise ValueError(f"Unsupported data source: {settings.app.data_source}")
+
+    def _effective_dry_run(self, request: PipelineRequest) -> bool:
+        return (
+            request.dry_run
+            or self.settings.futu.dry_run
+            or not self.settings.futu.enable_live_trading
+        )
 
     def _run_dir(self, request: PipelineRequest) -> Path:
         output_dir = _resolve_path(self.settings.app.output_dir)
@@ -205,9 +228,8 @@ class DailyStockPipeline:
     ) -> tuple[ExecutionFrameResult, StepSummary]:
         started = time.perf_counter()
         result = work()
-        skipped = result.execution_plan.loc[
-            result.execution_plan.get("action", pd.Series(dtype=str)).eq("SKIP")
-        ]
+        action = result.execution_plan.get("action", pd.Series(dtype=str))
+        skipped = result.execution_plan.loc[action.isin(["SKIP", "BLOCKED"])]
         summary = StepSummary(
             name=name,
             input_count=input_count,
@@ -271,3 +293,17 @@ def _records(frame: pd.DataFrame) -> list[dict[str, object]]:
     if frame.empty:
         return []
     return json.loads(frame.to_json(orient="records", date_format="iso"))
+
+
+def _log_step_summary(label: str, summary: StepSummary) -> None:
+    reclaimed = max(summary.input_count - summary.output_count, 0)
+    logger.info(
+        "[%s] Input: %s stocks, Output: %s stocks, Reclaimed: %s stocks, "
+        "Time elapsed: %.3f s, Rejections: %s",
+        label,
+        summary.input_count,
+        summary.output_count,
+        reclaimed,
+        summary.elapsed_seconds,
+        summary.rejection_counts or {},
+    )

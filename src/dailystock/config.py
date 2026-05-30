@@ -52,6 +52,8 @@ class FutuSettings(BaseModel):
     dry_run: bool = True
     enable_live_trading: bool = False
     max_spread_bps: float = 30
+    max_order_notional: float = 50_000
+    max_position_pct: float = 0.05
 
 
 class Settings(BaseModel):
@@ -69,6 +71,7 @@ class EnvSettings(BaseSettings):
     futu_port: int | None = None
     futu_trading_env: str | None = None
     dailystock_live_trading_enabled: bool | None = None
+    dailystock_webhook_secret: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -69,6 +69,7 @@ OpenClaw 可调用：
 ```bash
 curl -X POST http://127.0.0.1:8000/webhook/openclaw \
   -H "Content-Type: application/json" \
+  -H "X-OpenClaw-Token: ${DAILYSTOCK_WEBHOOK_SECRET}" \
   -d '{"as_of":"2026-05-29","markets":["CN","HK"],"dry_run":true}'
 ```
 
@@ -79,9 +80,10 @@ curl -X POST http://127.0.0.1:8000/webhook/openclaw \
 - `hard_filters`: 上市年限、20 日均成交额、市值、连续亏损、经营现金流底线。
 - `quality_filters`: ROE、毛利率、净利率、资产负债率、现金流含金量、5 年 CAGR。
 - `valuation_filters`: 行业历史 PE/PB 分位、FCF Yield。
-- `futu`: OpenD host/port、交易环境、dry-run、live-trading 总开关。
+- `futu`: OpenD host/port、交易环境、dry-run、live-trading 总开关、单笔订单金额上限、单只持仓比例上限。
 
 敏感信息放在 `.env`，参考 `.env.example`。不要提交真实 token、账号、交易密码或 OpenD 生产配置。
+Webhook 会校验 `X-OpenClaw-Token`，其值必须等于环境变量 `DAILYSTOCK_WEBHOOK_SECRET`。
 
 ## 数据源适配器
 
@@ -98,7 +100,8 @@ curl -X POST http://127.0.0.1:8000/webhook/openclaw \
 
 - 默认 `dry_run=true`，`FutuClient.place_order()` 会直接阻止下单。
 - 即使 CLI 使用 `--live`，仍需 `DAILYSTOCK_LIVE_TRADING_ENABLED=true` 且完成真实 Futu adapter 后才可能进入下单路径。
-- 第一版骨架不会实现真实订单数量、仓位、风控或账户同步逻辑；第五步仅生成可审计的执行计划。
+- 订单计划会经过 `max_order_notional` 和 `max_position_pct` 风控拦截；dry-run 也会计算并在执行计划中标记 `risk_status`。
+- 第一版骨架不会实现真实订单数量、完整仓位管理或账户同步逻辑；第五步仅生成可审计的执行计划。
 
 ## 开发校验
 

@@ -24,6 +24,19 @@ def test_pipeline_runs_full_sample_funnel(tmp_path) -> None:
     ]
     assert result.execution_plan
     assert all(plan["dry_run"] for plan in result.execution_plan)
+    assert all(plan["risk_status"] == "OK" for plan in result.execution_plan)
     assert any(path.endswith("dashboard.md") for path in result.artifacts)
     assert any(path.endswith("result.json") for path in result.artifacts)
 
+
+def test_pipeline_uses_strictest_dry_run_setting(tmp_path) -> None:
+    settings = load_settings()
+    settings.app.output_dir = str(tmp_path)
+    settings.futu.dry_run = True
+    settings.futu.enable_live_trading = True
+    request = PipelineRequest(as_of=date(2026, 5, 29), markets=["CN", "HK"], dry_run=False)
+
+    result = DailyStockPipeline(settings=settings).run(request)
+
+    assert result.request.dry_run is True
+    assert all(plan["dry_run"] for plan in result.execution_plan)

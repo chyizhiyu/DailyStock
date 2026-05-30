@@ -70,6 +70,10 @@ def build_dashboard(
                 "spread_bps",
                 "volume_signal",
                 "tradable",
+                "planned_notional",
+                "planned_position_pct",
+                "risk_status",
+                "risk_reason",
                 "dry_run",
             ]
             if column in execution_plan.columns

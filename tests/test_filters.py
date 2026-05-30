@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
+
 from dailystock.config import load_settings
 from dailystock.data_sources.sample import SampleDataProvider
 from dailystock.filters.step1_fetch_meta import fetch_meta
@@ -27,6 +29,36 @@ def test_hard_filters_reject_known_risks() -> None:
     assert result.rejection_counts["liquidity"] == 1
     assert result.rejection_counts["market_cap"] == 1
     assert result.rejection_counts["performance_floor"] == 1
+
+
+def test_hard_filters_reject_hk_suffix_even_without_vendor_flag() -> None:
+    settings, _ = _settings_and_provider()
+    meta = _minimal_meta(code="HK12345", name="Example Bio-W", market="HK")
+    result = run_hard_filters(
+        meta,
+        _daily_bars("HK12345", days=20, amount=60_000_000),
+        _hard_financials("HK12345"),
+        AS_OF,
+        settings.hard_filters,
+    )
+
+    assert result.candidates.empty
+    assert result.rejection_counts == {"risk_screen": 1}
+
+
+def test_hard_filters_reject_liquidity_when_effective_days_under_20() -> None:
+    settings, _ = _settings_and_provider()
+    meta = _minimal_meta(code="HK12345", name="Harbor Quality", market="HK")
+    result = run_hard_filters(
+        meta,
+        _daily_bars("HK12345", days=19, amount=60_000_000),
+        _hard_financials("HK12345"),
+        AS_OF,
+        settings.hard_filters,
+    )
+
+    assert result.candidates.empty
+    assert result.rejection_counts == {"liquidity": 1}
 
 
 def test_financial_quality_keeps_profitable_cash_generators() -> None:
@@ -78,3 +110,46 @@ def _settings_and_provider():
     data_dir = Path(__file__).resolve().parents[1] / "data" / "samples"
     return settings, SampleDataProvider(data_dir)
 
+
+def _minimal_meta(code: str, name: str, market: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "code": code,
+                "name": name,
+                "market": market,
+                "exchange": "HKEX" if market == "HK" else "SSE",
+                "industry": "HS_Healthcare" if market == "HK" else "SW_Healthcare",
+                "is_st": False,
+                "listing_date": "2010-01-01",
+                "total_market_cap": 10_000_000_000,
+                "is_suspended": False,
+                "is_penny_stock": False,
+                "is_biotech_w": False,
+                "is_profitable_biotech": True,
+            }
+        ]
+    )
+
+
+def _daily_bars(code: str, days: int, amount: float) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "code": code,
+            "trade_date": pd.bdate_range(end=pd.Timestamp(AS_OF), periods=days),
+            "amount": amount,
+        }
+    )
+
+
+def _hard_financials(code: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "code": code,
+                "fiscal_year": 2024,
+                "operating_cash_flow": 100_000_000,
+                "non_gaap_net_profit": 80_000_000,
+            }
+        ]
+    )
