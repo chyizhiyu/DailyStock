@@ -1,8 +1,9 @@
 app:
   timezone: Asia/Shanghai
-  data_source: sample
+  data_source: akshare
   output_dir: runs
   sample_data_dir: data/samples
+  akshare_cache_dir: data/cache/akshare
 
 markets:
   - CN

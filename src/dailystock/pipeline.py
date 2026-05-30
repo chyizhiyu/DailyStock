@@ -167,7 +167,7 @@ class DailyStockPipeline:
             data_dir = _resolve_path(settings.app.sample_data_dir)
             return SampleDataProvider(data_dir)
         if source == "akshare":
-            return AkShareDataProvider()
+            return AkShareDataProvider(cache_dir=_resolve_path(settings.app.akshare_cache_dir))
         if source == "tushare":
             return TushareDataProvider()
         if source in {"local_db", "local-db", "duckdb", "sqlite"}:

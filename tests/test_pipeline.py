@@ -9,6 +9,7 @@ from dailystock.pipeline import DailyStockPipeline
 
 def test_pipeline_runs_full_sample_funnel(tmp_path) -> None:
     settings = load_settings()
+    settings.app.data_source = "sample"
     settings.app.output_dir = str(tmp_path)
     request = PipelineRequest(as_of=date(2026, 5, 29), markets=["CN", "HK"], dry_run=True)
 
@@ -31,6 +32,7 @@ def test_pipeline_runs_full_sample_funnel(tmp_path) -> None:
 
 def test_pipeline_uses_strictest_dry_run_setting(tmp_path) -> None:
     settings = load_settings()
+    settings.app.data_source = "sample"
     settings.app.output_dir = str(tmp_path)
     settings.futu.dry_run = True
     settings.futu.enable_live_trading = True

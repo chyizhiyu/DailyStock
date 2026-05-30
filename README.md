@@ -87,12 +87,18 @@ Webhook 会校验 `X-OpenClaw-Token`，其值必须等于环境变量 `DAILYSTOC
 
 ## 数据源适配器
 
-当前默认使用 `data/samples/` 中的 CSV 样例数据，方便测试完整漏斗。后续可在统一 `DataProvider` 协议下接入：
+当前默认使用 `akshare` 真数据适配器，并将网络结果缓存到 `data/cache/akshare/`。测试和离线演示仍可把 `config/default.yaml` 中的 `app.data_source` 改回 `sample`，使用 `data/samples/` 中的 CSV 样例数据。
 
-- AkShare: [akshare Read the Docs](https://app.readthedocs.org/projects/akshare/)
+- AkShare: [AKShare 官方文档](https://akshare.akfamily.xyz/)
 - Tushare: [Tushare Pro 文档](https://tushare.pro/document/1?doc_id=1)
 - 本地 DuckDB/SQLite/Parquet 数据仓库
 - 富途 API 元信息或盘口数据
+
+AkShare 适配器当前覆盖：
+
+- A 股：通过 `index_stock_cons_weight_csindex(symbol="000985")` 获取中证全指成分股，并用全市场行情快照补充成交额、市值、PE/PB；申万行业分类来自 `stock_industry_clf_hist_sw()`。
+- 港股：优先尝试 AkShare 中可用的恒生综合指数成分接口；若当前 AkShare 版本未暴露稳定 HSCI 成分接口，则使用港股全市场快照作为港股初筛池，并保留 `HS_UNKNOWN` 行业兜底。
+- 历史数据：日线、财务、估值、分红等逐股接口均带 3 次指数退避重试，并写入本地缓存，避免每周重复拉取 5 年历史数据。
 
 第二、三、四步只依赖本地日线与历史财报/估值数据；实时盘口只允许进入第五步。
 

@@ -10,9 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppSettings(BaseModel):
     timezone: str = "Asia/Shanghai"
-    data_source: str = "sample"
+    data_source: str = "akshare"
     output_dir: str = "runs"
     sample_data_dir: str = "data/samples"
+    akshare_cache_dir: str = "data/cache/akshare"
 
 
 class HardFilterSettings(BaseModel):
