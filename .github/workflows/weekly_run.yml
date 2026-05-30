@@ -1,0 +1,108 @@
+name: Weekly DailyStock Run
+
+on:
+  schedule:
+    # 16:30 Asia/Shanghai every Friday, 08:30 UTC.
+    - cron: "30 8 * * 5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-dailystock-run
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Shanghai
+  DAILYSTOCK_TIMEZONE: Asia/Shanghai
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  full-market-screen:
+    name: Full Market Screen
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Force Shanghai timezone
+        run: |
+          sudo timedatectl set-timezone Asia/Shanghai || sudo ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+          echo "TZ=Asia/Shanghai" >> "$GITHUB_ENV"
+          echo "DAILYSTOCK_TIMEZONE=Asia/Shanghai" >> "$GITHUB_ENV"
+          date
+          timedatectl || true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pandas pydantic pydantic-settings fastapi uvicorn typer pyyaml akshare tenacity requests
+          python3 -m pip install -e .
+
+      - name: Verify Shanghai as_of date
+        run: |
+          python3 - <<'PY'
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          from dailystock.utils.calendar import parse_date
+
+          shanghai_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+          print(f"Shanghai now: {shanghai_now.isoformat()}")
+          print(f"DailyStock as_of: {parse_date(None).isoformat()}")
+          PY
+
+      - name: Run DailyStock full market screen
+        run: python3 -m dailystock.cli run --markets CN,HK --dry-run
+
+      - name: Prepare report artifact
+        if: always()
+        run: |
+          mkdir -p reports
+          RUN_DIR="$(find runs -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n 1 || true)"
+          if [ -n "$RUN_DIR" ]; then
+            cp -R "$RUN_DIR" "reports/$(basename "$RUN_DIR")"
+            [ -f "$RUN_DIR/dashboard.md" ] && cp "$RUN_DIR/dashboard.md" reports/dashboard.md
+            [ -f "$RUN_DIR/result.json" ] && cp "$RUN_DIR/result.json" reports/result.json
+            if [ -f "$RUN_DIR/result.json" ]; then
+              python3 - "$RUN_DIR/result.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          import pandas as pd
+
+          result_path = Path(sys.argv[1])
+          reports_dir = Path("reports")
+          result = json.loads(result_path.read_text(encoding="utf-8"))
+          pd.DataFrame(result.get("final_candidates", [])).to_csv(
+              reports_dir / "final_candidates.csv",
+              index=False,
+          )
+          PY
+            elif [ -f "$RUN_DIR/step4_valuation_candidates.csv" ]; then
+              cp "$RUN_DIR/step4_valuation_candidates.csv" reports/final_candidates.csv
+            fi
+          fi
+          find reports -maxdepth 3 -type f -print
+
+      - name: Upload DailyStock artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dailystock-weekly-reports
+          path: |
+            reports/
+            runs/**/dashboard.md
+            runs/**/step4_valuation_candidates.csv
+            runs/**/result.json
+          retention-days: 7
+          if-no-files-found: warn
