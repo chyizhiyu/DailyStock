@@ -1,0 +1,13 @@
+code,name,market,exchange,industry,is_st,listing_date,total_market_cap,free_float_market_cap,is_suspended,is_penny_stock,is_biotech_w,is_profitable_biotech
+CN000001,Huaguang Consumer,CN,SSE,SW_FoodBeverage,false,2010-06-01,20000000000,12000000000,false,false,false,true
+HK00001,Harbor Utility,HK,HKEX,HS_Utilities,false,2008-04-15,30000000000,18000000000,false,false,false,true
+CN000002,ST Machinery,CN,SZSE,SW_Machinery,true,2009-05-20,9000000000,5000000000,false,false,false,true
+HK00002,InnovBio-W,HK,HKEX,HS_Healthcare,false,2015-09-01,12000000000,7000000000,false,false,true,false
+CN000003,New Energy Star,CN,SSE,SW_ElectricalEquipment,false,2024-01-12,15000000000,9000000000,false,false,false,true
+CN000004,Thin Liquidity,CN,SZSE,SW_Chemicals,false,2012-03-08,11000000000,6000000000,false,false,false,true
+CN000005,Micro Cap,CN,SSE,SW_Textile,false,2011-07-21,2000000000,1000000000,false,false,false,true
+CN000006,Loss Maker,CN,SZSE,SW_Retail,false,2010-11-02,8000000000,4500000000,false,false,false,true
+CN000007,Weak Quality,CN,SSE,SW_FoodBeverage,false,2014-02-18,10000000000,6500000000,false,false,false,true
+CN000008,Expensive Compounder,CN,SZSE,SW_FoodBeverage,false,2013-08-30,22000000000,15000000000,false,false,false,true
+HK00003,Suspended HoldCo,HK,HKEX,HS_Utilities,false,2007-12-10,9000000000,4000000000,true,false,false,true
+

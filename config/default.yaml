@@ -1,0 +1,44 @@
+app:
+  timezone: Asia/Shanghai
+  data_source: sample
+  output_dir: runs
+  sample_data_dir: data/samples
+
+markets:
+  - CN
+  - HK
+
+hard_filters:
+  min_listing_years: 3
+  min_avg_turnover:
+    CN: 30000000
+    HK: 30000000
+  min_total_market_cap: 5000000000
+  consecutive_loss_years: 2
+  negative_ocf_years: 3
+
+quality_filters:
+  min_roe: 0.10
+  min_gross_margin: 0.25
+  min_net_margin: 0.08
+  max_debt_asset_ratio: 0.60
+  min_ocf_to_net_profit: 0.80
+  growth_years: 5
+  min_revenue_cagr: 0.03
+  min_net_profit_cagr: 0.03
+
+valuation_filters:
+  lookback_years: 5
+  min_pe_percentile: 0.0
+  max_pe_percentile: 0.5
+  min_pb_percentile: 0.0
+  max_pb_percentile: 0.5
+  min_fcf_yield: 0.03
+
+futu:
+  host: 127.0.0.1
+  port: 11111
+  trading_env: SIMULATE
+  dry_run: true
+  enable_live_trading: false
+  max_spread_bps: 30
