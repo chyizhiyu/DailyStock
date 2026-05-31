@@ -21,19 +21,21 @@ permissions:
 
 concurrency:
   group: weekly-dailystock-run
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   TZ: Asia/Shanghai
   DAILYSTOCK_TIMEZONE: Asia/Shanghai
   DAILYSTOCK_AKSHARE_SEED_DIR: data/seed/akshare
   DAILYSTOCK_AKSHARE_OFFLINE: ${{ vars.DAILYSTOCK_AKSHARE_OFFLINE }}
+  DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT: "80"
   PYTHONUNBUFFERED: "1"
 
 jobs:
   full-market-screen:
     name: Full Market Screen
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout

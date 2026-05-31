@@ -5,6 +5,7 @@ import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -17,7 +18,10 @@ from dailystock.data_sources.tushare import TushareDataProvider
 from dailystock.executor.futu_client import FutuClient
 from dailystock.executor.step5_futu_executor import run_futu_executor
 from dailystock.filters.step1_fetch_meta import fetch_meta
-from dailystock.filters.step2_hard_filters import run_hard_filters
+from dailystock.filters.step2_hard_filters import (
+    run_hard_filters,
+    run_non_financial_hard_filters,
+)
 from dailystock.filters.step3_financial_quality import run_financial_quality_filters
 from dailystock.filters.step4_valuation import run_valuation_filters
 from dailystock.models.screening import (
@@ -63,8 +67,28 @@ class DailyStockPipeline:
         steps.append(summary)
 
         codes = meta["code"].tolist()
-        daily_bars = self.provider.load_daily_bars(codes, as_of=request.as_of, lookback_days=30)
-        hard_financials = self.provider.load_financials(codes, as_of=request.as_of)
+        daily_bars = _time_data_load(
+            "Daily Bars",
+            len(codes),
+            lambda: self.provider.load_daily_bars(codes, as_of=request.as_of, lookback_days=30),
+        )
+        pre_hard_result = _time_data_load(
+            "Step 2 Pre-Financial Hard Filter",
+            len(meta),
+            lambda: run_non_financial_hard_filters(
+                meta,
+                daily_bars,
+                as_of=request.as_of,
+                settings=self.settings.hard_filters,
+            ),
+            output_count=lambda result: len(result.candidates),
+        )
+        hard_financial_codes = pre_hard_result.candidates["code"].tolist()
+        hard_financials = _time_data_load(
+            "Hard Financials",
+            len(hard_financial_codes),
+            lambda: self.provider.load_financials(hard_financial_codes, as_of=request.as_of),
+        )
         hard_result, summary = self._time_filter_step(
             "step2_hard_filters",
             input_count=len(meta),
@@ -81,7 +105,11 @@ class DailyStockPipeline:
         steps.append(summary)
 
         quality_codes = hard_result.candidates["code"].tolist()
-        quality_financials = self.provider.load_financials(quality_codes, as_of=request.as_of)
+        quality_financials = _time_data_load(
+            "Quality Financials",
+            len(quality_codes),
+            lambda: self.provider.load_financials(quality_codes, as_of=request.as_of),
+        )
         quality_result, summary = self._time_filter_step(
             "step3_financial_quality",
             input_count=len(hard_result.candidates),
@@ -106,8 +134,17 @@ class DailyStockPipeline:
             as_of=request.as_of,
             lookback_years=self.settings.valuation_filters.lookback_years,
         )
-        dividends = self.provider.load_dividends(codes=None, as_of=request.as_of)
-        free_cash_flow = self.provider.load_free_cash_flow(codes=None, as_of=request.as_of)
+        valuation_codes = quality_result.candidates["code"].tolist()
+        dividends = _time_data_load(
+            "Dividends",
+            len(valuation_codes),
+            lambda: self.provider.load_dividends(valuation_codes, as_of=request.as_of),
+        )
+        free_cash_flow = _time_data_load(
+            "Free Cash Flow",
+            len(valuation_codes),
+            lambda: self.provider.load_free_cash_flow(valuation_codes, as_of=request.as_of),
+        )
         valuation_result, summary = self._time_filter_step(
             "step4_valuation",
             input_count=len(quality_result.candidates),
@@ -296,6 +333,26 @@ def _records(frame: pd.DataFrame) -> list[dict[str, object]]:
     if frame.empty:
         return []
     return json.loads(frame.to_json(orient="records", date_format="iso"))
+
+
+def _time_data_load(
+    label: str,
+    input_count: int,
+    work: Callable[[], Any],
+    output_count: Callable[[Any], int] | None = None,
+) -> Any:
+    started = time.perf_counter()
+    result = work()
+    elapsed = time.perf_counter() - started
+    count = output_count(result) if output_count else len(result)
+    logger.info(
+        "[Data Load %s] Input: %s stocks, Output: %s rows, Time elapsed: %.3f s",
+        label,
+        input_count,
+        count,
+        elapsed,
+    )
+    return result
 
 
 def _log_step_summary(label: str, summary: StepSummary) -> None:

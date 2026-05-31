@@ -14,6 +14,11 @@ The command defaults to `--max-workers 1` because some AkShare/Sina daily endpoi
 thread-safe on macOS. For a quick smoke test, add `--max-codes 20`. A full run should omit
 `--max-codes`.
 
+Online CI runs use AkShare's A-share annual bulk financial tables before trying per-stock
+financial endpoints. If those bulk tables fail, `DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT`
+caps the number of per-stock fallbacks so the workflow fails gracefully instead of hanging for
+hours.
+
 Required canonical files for an offline full run:
 
 | File | Required columns |

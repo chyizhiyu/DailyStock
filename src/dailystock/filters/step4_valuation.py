@@ -35,9 +35,11 @@ def run_valuation_filters(
         free_cash_flow.loc[free_cash_flow["code"].isin(candidates["code"])],
         date_column="date",
     )
-    dividend_medians = _latest_by_code(dividends, date_column="date").groupby("industry")[
-        "dividend_yield"
-    ].median()
+    dividend_stats = (
+        _latest_by_code(dividends, date_column="date")
+        .groupby("industry")["dividend_yield"]
+        .agg(["median", "count"])
+    )
 
     enriched = candidates.merge(
         current_valuation[["code", "industry", "pe_ttm", "pb"]].rename(
@@ -57,18 +59,23 @@ def run_valuation_filters(
     pe_percentiles: list[float | None] = []
     pb_percentiles: list[float | None] = []
     industry_dividend_medians: list[float | None] = []
+    industry_dividend_counts: list[int] = []
     for _, row in enriched.iterrows():
         industry = row["valuation_industry"]
         history = valuation_history.loc[valuation_history["industry"] == industry]
         pe_percentiles.append(percentile_rank_lower(row.get("pe_ttm"), history["pe_ttm"]))
         pb_percentiles.append(percentile_rank_lower(row.get("pb"), history["pb"]))
-        industry_dividend_medians.append(
-            float(dividend_medians[industry]) if industry in dividend_medians.index else None
-        )
+        if industry in dividend_stats.index:
+            industry_dividend_medians.append(float(dividend_stats.loc[industry, "median"]))
+            industry_dividend_counts.append(int(dividend_stats.loc[industry, "count"]))
+        else:
+            industry_dividend_medians.append(None)
+            industry_dividend_counts.append(0)
 
     enriched["pe_percentile"] = pe_percentiles
     enriched["pb_percentile"] = pb_percentiles
     enriched["industry_dividend_median"] = industry_dividend_medians
+    enriched["industry_dividend_count"] = industry_dividend_counts
 
     return split_by_rules(
         enriched,
@@ -107,8 +114,7 @@ def run_valuation_filters(
             ),
             (
                 "dividend_yield",
-                lambda frame: pd.to_numeric(frame["dividend_yield"], errors="coerce")
-                > pd.to_numeric(frame["industry_dividend_median"], errors="coerce"),
+                _dividend_yield_ok,
             ),
             (
                 "fcf_yield",
@@ -117,6 +123,13 @@ def run_valuation_filters(
             ),
         ],
     )
+
+
+def _dividend_yield_ok(frame: pd.DataFrame) -> pd.Series:
+    dividend_yield = pd.to_numeric(frame["dividend_yield"], errors="coerce")
+    median = pd.to_numeric(frame["industry_dividend_median"], errors="coerce")
+    sample_count = pd.to_numeric(frame["industry_dividend_count"], errors="coerce").fillna(0)
+    return (dividend_yield > median) | ((sample_count <= 1) & (dividend_yield >= median))
 
 
 def _latest_by_code(frame: pd.DataFrame, date_column: str) -> pd.DataFrame:

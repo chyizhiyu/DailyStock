@@ -23,6 +23,8 @@ CSI_ALL_SHARE = "000985"
 DEFAULT_CACHE_DIR = project_root() / "data" / "cache" / "akshare"
 DEFAULT_SEED_DIR = project_root() / "data" / "seed" / "akshare"
 SINA_DAILY_LOCK = threading.Lock()
+CN_BULK_FINANCIAL_LOOKBACK_YEARS = 6
+CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT = 80
 EMPTY_FINANCIAL_COLUMNS = [
     "code",
     "fiscal_year",
@@ -130,10 +132,38 @@ class AkShareDataProvider:
         seed = self._load_seed_financials(code_list, as_of)
         present = set(seed["code"].astype(str)) if not seed.empty else set()
         missing_codes = [code for code in code_list if code not in present]
-        frames = [] if self.offline else self._map_codes(
-            missing_codes,
-            lambda code: self._load_financial_one(code, as_of),
-        )
+        frames: list[pd.DataFrame] = []
+        if not self.offline:
+            cn_codes = [code for code in missing_codes if self._market_for_code(code) == "CN"]
+            other_codes = [code for code in missing_codes if self._market_for_code(code) != "CN"]
+            cn_bulk = self._load_cn_financials_bulk(cn_codes, as_of)
+            if not cn_bulk.empty:
+                frames.append(cn_bulk)
+            bulk_present = set(cn_bulk["code"].astype(str)) if not cn_bulk.empty else set()
+            cn_missing_after_bulk = [code for code in cn_codes if code not in bulk_present]
+            fallback_limit = _per_stock_financial_fallback_limit()
+            if cn_missing_after_bulk and len(cn_missing_after_bulk) <= fallback_limit:
+                frames.extend(
+                    self._map_codes(
+                        cn_missing_after_bulk,
+                        lambda code: self._load_financial_one(code, as_of),
+                    )
+                )
+            elif cn_missing_after_bulk:
+                logger.warning(
+                    "Skipping %s CN per-stock financial fallbacks; bulk tables returned %s/%s "
+                    "codes and DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT=%s.",
+                    len(cn_missing_after_bulk),
+                    len(bulk_present),
+                    len(cn_codes),
+                    fallback_limit,
+                )
+            frames.extend(
+                self._map_codes(
+                    other_codes,
+                    lambda code: self._load_financial_one(code, as_of),
+                )
+            )
         if not seed.empty:
             frames.append(seed)
         if not frames:
@@ -877,6 +907,91 @@ class AkShareDataProvider:
         self._write_cache(cache_path, frame)
         return frame
 
+    def _load_cn_financials_bulk(self, codes: Sequence[str], as_of: date) -> pd.DataFrame:
+        if not codes:
+            return pd.DataFrame(columns=EMPTY_FINANCIAL_COLUMNS)
+
+        latest_year = as_of.year - 1
+        start_year = max(1990, latest_year - CN_BULK_FINANCIAL_LOOKBACK_YEARS)
+        cache_path = self._cache_path("cn_financials_bulk", start_year, latest_year, as_of.year)
+        cached = self._read_cache(cache_path)
+        if cached is not None:
+            financials = _ensure_columns(cached, EMPTY_FINANCIAL_COLUMNS)
+            return financials.loc[financials["code"].astype(str).isin(set(codes))].reset_index(
+                drop=True
+            )
+
+        frames: list[pd.DataFrame] = []
+        for fiscal_year in range(start_year, latest_year + 1):
+            year_frame = self._load_cn_financials_bulk_year(fiscal_year, as_of)
+            if not year_frame.empty:
+                frames.append(year_frame)
+
+        if not frames:
+            return pd.DataFrame(columns=EMPTY_FINANCIAL_COLUMNS)
+
+        financials = pd.concat(frames, ignore_index=True)
+        financials = _ensure_columns(financials, EMPTY_FINANCIAL_COLUMNS)
+        financials = financials.sort_values(["code", "fiscal_year"]).drop_duplicates(
+            ["code", "fiscal_year"],
+            keep="last",
+        )
+        self._write_cache(cache_path, financials)
+        return financials.loc[financials["code"].astype(str).isin(set(codes))].reset_index(
+            drop=True
+        )
+
+    def _load_cn_financials_bulk_year(self, fiscal_year: int, as_of: date) -> pd.DataFrame:
+        date_key = f"{fiscal_year}1231"
+        yjbb = self._load_cn_annual_table("yjbb", "stock_yjbb_em", date_key)
+        if yjbb.empty:
+            return pd.DataFrame(columns=EMPTY_FINANCIAL_COLUMNS)
+
+        metrics = _normalize_cn_yjbb_table(yjbb, fiscal_year, as_of)
+        if metrics.empty:
+            return pd.DataFrame(columns=EMPTY_FINANCIAL_COLUMNS)
+
+        cash = _normalize_cn_xjll_table(
+            self._load_cn_annual_table("xjll", "stock_xjll_em", date_key),
+            fiscal_year,
+            as_of,
+        )
+        debt = _normalize_cn_zcfz_table(
+            self._load_cn_annual_table("zcfz", "stock_zcfz_em", date_key),
+            fiscal_year,
+            as_of,
+        )
+        frame = metrics.merge(cash, on=["code", "fiscal_year"], how="left")
+        frame = frame.merge(debt, on=["code", "fiscal_year"], how="left")
+        frame["debt_asset_ratio"] = frame["debt_asset_ratio"].combine_first(
+            frame["debt_asset_ratio_from_yjbb"]
+        )
+        frame["non_gaap_net_profit"] = frame["net_profit"]
+        return _ensure_columns(frame, EMPTY_FINANCIAL_COLUMNS).reset_index(drop=True)
+
+    def _load_cn_annual_table(
+        self,
+        table_name: str,
+        function_name: str,
+        date_key: str,
+    ) -> pd.DataFrame:
+        cache_path = self._cache_path("cn_annual", table_name, date_key)
+        cached = self._read_cache(cache_path)
+        if cached is not None:
+            return cached
+        try:
+            frame = self._call(function_name, date=date_key)
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch CN annual %s table for %s: %s",
+                table_name,
+                date_key,
+                exc,
+            )
+            return pd.DataFrame()
+        self._write_cache(cache_path, frame)
+        return frame
+
     def _fetch_cn_financials(self, code: str, as_of: date) -> pd.DataFrame:
         start_year = str(max(1900, as_of.year - 6))
         raw = self._call("stock_financial_analysis_indicator", symbol=code, start_year=start_year)
@@ -1323,6 +1438,102 @@ def _annual_rows(frame: pd.DataFrame) -> pd.DataFrame:
     return annual.drop(columns=["report_date"], errors="ignore")
 
 
+def _normalize_cn_yjbb_table(
+    raw: pd.DataFrame,
+    fiscal_year: int,
+    as_of: date,
+) -> pd.DataFrame:
+    if raw.empty:
+        return pd.DataFrame()
+    frame = pd.DataFrame(
+        {
+            "code": _coalesce(raw, ["股票代码", "代码", "SECURITY_CODE"]).map(_normalize_cn_code),
+            "fiscal_year": fiscal_year,
+            "roe": _percent_or_decimal(_coalesce(raw, ["净资产收益率", "ROE"])),
+            "gross_margin": _percent_or_decimal(_coalesce(raw, ["销售毛利率", "毛利率"])),
+            "revenue": _numeric(
+                _coalesce(raw, ["营业总收入-营业总收入", "营业总收入", "OPERATE_INCOME"])
+            ),
+            "net_profit": _numeric(_coalesce(raw, ["净利润-净利润", "净利润", "PARENT_NETPROFIT"])),
+            "operating_cash_flow_per_share": _numeric(
+                _coalesce(raw, ["每股经营现金流量", "每股经营现金流"])
+            ),
+            "debt_asset_ratio_from_yjbb": _percent_or_decimal(
+                _coalesce(raw, ["资产负债率", "资产负债率(%)"])
+            ),
+            "report_date": pd.to_datetime(
+                _coalesce(raw, ["最新公告日期", "公告日期", "NOTICE_DATE"]),
+                errors="coerce",
+            ),
+        }
+    )
+    frame = _filter_reported_rows(frame, as_of)
+    frame["net_margin"] = pd.NA
+    valid_revenue = frame["revenue"].notna() & frame["revenue"].ne(0)
+    frame.loc[valid_revenue, "net_margin"] = (
+        frame.loc[valid_revenue, "net_profit"] / frame.loc[valid_revenue, "revenue"]
+    )
+    return frame.drop(columns=["report_date"], errors="ignore")
+
+
+def _normalize_cn_xjll_table(
+    raw: pd.DataFrame,
+    fiscal_year: int,
+    as_of: date,
+) -> pd.DataFrame:
+    if raw.empty:
+        return pd.DataFrame(columns=["code", "fiscal_year", "operating_cash_flow"])
+    frame = pd.DataFrame(
+        {
+            "code": _coalesce(raw, ["股票代码", "代码", "SECURITY_CODE"]).map(_normalize_cn_code),
+            "fiscal_year": fiscal_year,
+            "operating_cash_flow": _numeric(
+                _coalesce(raw, ["经营性现金流-现金流量净额", "经营活动产生的现金流量净额"])
+            ),
+            "report_date": pd.to_datetime(
+                _coalesce(raw, ["公告日期", "最新公告日期", "NOTICE_DATE"]),
+                errors="coerce",
+            ),
+        }
+    )
+    frame = _filter_reported_rows(frame, as_of)
+    return frame[["code", "fiscal_year", "operating_cash_flow"]]
+
+
+def _normalize_cn_zcfz_table(
+    raw: pd.DataFrame,
+    fiscal_year: int,
+    as_of: date,
+) -> pd.DataFrame:
+    if raw.empty:
+        return pd.DataFrame(columns=["code", "fiscal_year", "debt_asset_ratio"])
+    frame = pd.DataFrame(
+        {
+            "code": _coalesce(raw, ["股票代码", "代码", "SECURITY_CODE"]).map(_normalize_cn_code),
+            "fiscal_year": fiscal_year,
+            "debt_asset_ratio": _percent_or_decimal(_coalesce(raw, ["资产负债率"])),
+            "report_date": pd.to_datetime(
+                _coalesce(raw, ["公告日期", "最新公告日期", "NOTICE_DATE"]),
+                errors="coerce",
+            ),
+        }
+    )
+    frame = _filter_reported_rows(frame, as_of)
+    return frame[["code", "fiscal_year", "debt_asset_ratio"]]
+
+
+def _filter_reported_rows(frame: pd.DataFrame, as_of: date) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    out = frame.dropna(subset=["code"]).copy()
+    reported = out["report_date"].isna() | (out["report_date"] <= pd.Timestamp(as_of))
+    out = out.loc[reported & out["code"].ne("")]
+    return out.sort_values(["code", "report_date"]).drop_duplicates(
+        ["code", "fiscal_year"],
+        keep="last",
+    )
+
+
 def _normalize_financial_amount_table(
     code: str,
     raw: pd.DataFrame,
@@ -1387,6 +1598,21 @@ def _unknown_industry(market: str) -> str:
 
 def _truthy(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _per_stock_financial_fallback_limit() -> int:
+    raw = os.environ.get("DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT")
+    if raw is None:
+        return CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning(
+            "Invalid DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT=%r; using %s.",
+            raw,
+            CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT,
+        )
+        return CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT
 
 
 def _slug(value: str) -> str:

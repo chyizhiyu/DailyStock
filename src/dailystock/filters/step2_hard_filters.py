@@ -55,6 +55,36 @@ def run_hard_filters(
     )
 
 
+def run_non_financial_hard_filters(
+    meta: pd.DataFrame,
+    daily_bars: pd.DataFrame,
+    as_of: date,
+    settings: HardFilterSettings,
+) -> FilterFrameResult:
+    require_columns(daily_bars, ["code", "trade_date", "amount"], "daily_bars")
+
+    enriched = meta.copy()
+    enriched["listing_date"] = pd.to_datetime(enriched["listing_date"])
+    enriched = enriched.merge(_avg_turnover(daily_bars, as_of), on="code", how="left")
+    enriched["effective_trade_days_30d"] = enriched["effective_trade_days_30d"].fillna(0)
+
+    cutoff = pd.Timestamp(as_of) - pd.DateOffset(years=settings.min_listing_years)
+
+    return split_by_rules(
+        enriched,
+        [
+            ("risk_screen", _risk_screen),
+            ("listing_age", lambda frame: frame["listing_date"] <= cutoff),
+            ("liquidity", lambda frame: _turnover_ok(frame, settings)),
+            (
+                "market_cap",
+                lambda frame: pd.to_numeric(frame["total_market_cap"], errors="coerce")
+                >= settings.min_total_market_cap,
+            ),
+        ],
+    )
+
+
 def _avg_turnover(daily_bars: pd.DataFrame, as_of: date) -> pd.DataFrame:
     bars = daily_bars.copy()
     bars["trade_date"] = pd.to_datetime(bars["trade_date"])
