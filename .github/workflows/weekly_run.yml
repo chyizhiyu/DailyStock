@@ -30,6 +30,7 @@ env:
   DAILYSTOCK_AKSHARE_OFFLINE: ${{ vars.DAILYSTOCK_AKSHARE_OFFLINE }}
   DAILYSTOCK_AKSHARE_DAILY_BAR_MODE: spot-proxy
   DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT: "80"
+  DAILYSTOCK_AKSHARE_HK_FINANCIAL_LIMIT: "250"
   PYTHONUNBUFFERED: "1"
 
 jobs:
@@ -106,6 +107,26 @@ jobs:
 
       - name: Run DailyStock full market screen
         run: python3 -m dailystock.cli run --as-of "$DAILYSTOCK_AS_OF" --markets CN,HK --dry-run
+
+      - name: Validate CN and HK coverage
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          import pandas as pd
+
+          run_dir = Path("runs") / "${{ env.DAILYSTOCK_AS_OF }}".replace("-", "")
+          meta_path = run_dir / "step1_meta.csv"
+          if not meta_path.exists():
+              raise SystemExit(f"Missing step1 metadata artifact: {meta_path}")
+
+          meta = pd.read_csv(meta_path, low_memory=False)
+          counts = meta["market"].value_counts().to_dict() if "market" in meta else {}
+          print(f"Step 1 market coverage: {counts}")
+          missing = [market for market in ["CN", "HK"] if counts.get(market, 0) <= 0]
+          if missing:
+              raise SystemExit(f"Missing requested market coverage in step1: {missing}")
+          PY
 
       - name: Prepare report artifact
         if: always()

@@ -46,6 +46,46 @@ def test_akshare_provider_normalizes_vendor_shapes(tmp_path) -> None:
     assert fcf["fcf_yield"].notna().all()
 
 
+def test_akshare_provider_hk_sina_fallback_ignores_empty_cache(tmp_path) -> None:
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_FakeSinaHongKongAkShare(),
+        max_workers=1,
+    )
+    provider._cache_path("hk_spot_full", AS_OF.strftime("%Y%m%d")).write_text(  # noqa: SLF001
+        "code,name_spot,latest_price,amount,pe_ttm,pb,total_market_cap,free_float_market_cap\n",
+        encoding="utf-8",
+    )
+    provider._cache_path("hk_hsci_constituents", AS_OF.strftime("%Y%m%d")).write_text(  # noqa: SLF001
+        "code,name,industry\n",
+        encoding="utf-8",
+    )
+    provider._fetch_hk_spot_full_from_eastmoney = _raise_hk_spot_failure  # noqa: SLF001
+    provider._load_hk_metrics_snapshot = lambda as_of: pd.DataFrame(  # noqa: ARG005, SLF001
+        {
+            "code": ["00700"],
+            "name_spot": ["腾讯控股"],
+            "latest_price": [pd.NA],
+            "amount": [pd.NA],
+            "pe_ttm": [14.8],
+            "pb": [3.05],
+            "total_market_cap": [3_895_000_000_000],
+            "free_float_market_cap": [3_895_000_000_000],
+        }
+    )
+
+    meta = provider.fetch_meta(AS_OF, ["HK"])
+
+    assert len(meta) == 1
+    row = meta.iloc[0]
+    assert row["code"] == "00700"
+    assert row["market"] == "HK"
+    assert row["amount"] == 1_000_000_000
+    assert row["total_market_cap"] == 3_895_000_000_000
+    assert row["pe_ttm"] == 14.8
+
+
 def test_akshare_provider_uses_seed_files_in_offline_mode(tmp_path) -> None:
     seed_dir = tmp_path / "seed"
     seed_dir.mkdir()
@@ -186,6 +226,7 @@ def test_akshare_financials_skip_non_cn_bulk_fallback_when_over_limit(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT", "1")
+    monkeypatch.setenv("DAILYSTOCK_AKSHARE_HK_FINANCIAL_LIMIT", "0")
     provider = AkShareDataProvider(
         cache_dir=tmp_path / "cache",
         seed_dir=tmp_path / "seed",
@@ -389,9 +430,30 @@ def _fake_hk_spot() -> pd.DataFrame:
     )
 
 
+def _raise_hk_spot_failure() -> pd.DataFrame:
+    raise ConnectionError("HK push2 blocked")
+
+
 def _fake_hist(amount: float) -> pd.DataFrame:
     dates = pd.bdate_range(end=pd.Timestamp(AS_OF), periods=20)
     return pd.DataFrame({"日期": dates, "成交额": amount})
+
+
+class _FakeSinaHongKongAkShare:
+    @staticmethod
+    def stock_hk_spot() -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "代码": ["00700"],
+                "中文名称": ["腾讯控股"],
+                "最新价": [427.2],
+                "成交额": [1_000_000_000],
+            }
+        )
+
+    @staticmethod
+    def stock_ipo_hk_ths() -> pd.DataFrame:
+        return pd.DataFrame({"代码": ["00700"], "上市日期": ["2004-06-16"]})
 
 
 class _ExplodingAkShare:

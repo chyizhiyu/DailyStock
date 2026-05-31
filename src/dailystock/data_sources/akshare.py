@@ -26,6 +26,7 @@ DEFAULT_SEED_DIR = project_root() / "data" / "seed" / "akshare"
 SINA_DAILY_LOCK = threading.Lock()
 CN_BULK_FINANCIAL_LOOKBACK_YEARS = 6
 CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT = 80
+HK_PER_STOCK_FINANCIAL_FALLBACK_LIMIT = 250
 DAILY_BAR_PROXY_THRESHOLD = 300
 EMPTY_FINANCIAL_COLUMNS = [
     "code",
@@ -169,19 +170,23 @@ class AkShareDataProvider:
                     len(cn_codes),
                     fallback_limit,
                 )
-            if other_codes and len(other_codes) <= fallback_limit:
+            hk_fallback_limit = _hk_financial_fallback_limit()
+            selected_other_codes = self._limited_financial_codes(other_codes, hk_fallback_limit)
+            skipped_other_codes = len(other_codes) - len(selected_other_codes)
+            if selected_other_codes:
                 frames.extend(
                     self._map_codes(
-                        other_codes,
+                        selected_other_codes,
                         lambda code: self._load_financial_one(code, as_of),
                     )
                 )
-            elif other_codes:
+            if skipped_other_codes:
                 logger.warning(
-                    "Skipping %s non-CN per-stock financial loads; provide seed "
-                    "financials.csv for HK fundamentals or raise "
-                    "DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT.",
-                    len(other_codes),
+                    "Skipping %s non-CN per-stock financial loads after selecting %s by "
+                    "market cap; provide seed financials.csv for strict HK fundamentals "
+                    "or raise DAILYSTOCK_AKSHARE_HK_FINANCIAL_LIMIT.",
+                    skipped_other_codes,
+                    len(selected_other_codes),
                 )
         if not seed.empty:
             frames.append(seed)
@@ -210,8 +215,13 @@ class AkShareDataProvider:
         )
         if codes is None and seed.empty and not self.offline:
             cached = self._read_cache(cache_path)
-            if cached is not None:
+            if cached is not None and not cached.empty:
                 return _ensure_columns(cached, EMPTY_VALUATION_COLUMNS)
+            if cached is not None and cached.empty:
+                logger.warning(
+                    "Ignoring empty valuation history cache at %s and rebuilding.",
+                    cache_path,
+                )
 
         code_list = self._resolve_codes(codes)
         present = set(seed["code"].astype(str)) if not seed.empty else set()
@@ -664,20 +674,35 @@ class AkShareDataProvider:
 
         cache_path = self._cache_path("hk_spot_full", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
-        if cached is not None:
+        if cached is not None and not cached.empty:
             return cached
+        if cached is not None and cached.empty:
+            logger.warning(
+                "Ignoring empty HK spot cache at %s and retrying data sources.",
+                cache_path,
+            )
 
         try:
             frame = self._fetch_hk_spot_full_from_eastmoney()
+            if frame.empty:
+                raise ValueError("Eastmoney HK spot snapshot returned no rows")
         except Exception as exc:
-            logger.warning("Full HK spot snapshot failed, falling back to AkShare columns: %s", exc)
+            logger.warning("Full HK spot snapshot failed, falling back to Sina HK spot: %s", exc)
             try:
-                raw = self._call("stock_hk_spot_em")
-                frame = self._normalize_hk_spot(raw)
-            except Exception as fallback_exc:
-                logger.warning("Failed to fetch HK spot snapshot: %s", fallback_exc)
-                frame = pd.DataFrame(columns=_a_spot_columns())
-        self._write_cache(cache_path, frame)
+                frame = self._fetch_hk_spot_full_from_sina(as_of)
+            except Exception as sina_exc:
+                logger.warning(
+                    "Sina HK spot snapshot failed, trying AkShare EM fallback: %s",
+                    sina_exc,
+                )
+                try:
+                    raw = self._call("stock_hk_spot_em")
+                    frame = self._normalize_hk_spot(raw)
+                except Exception as fallback_exc:
+                    logger.warning("Failed to fetch HK spot snapshot: %s", fallback_exc)
+                    frame = pd.DataFrame(columns=_a_spot_columns())
+        if not frame.empty:
+            self._write_cache(cache_path, frame)
         return frame
 
     def _normalize_hk_spot(self, raw: pd.DataFrame) -> pd.DataFrame:
@@ -723,6 +748,79 @@ class AkShareDataProvider:
                 "free_float_market_cap": _numeric(raw["f21"]),
             }
         ).dropna(subset=["code"])
+
+    def _fetch_hk_spot_full_from_sina(self, as_of: date) -> pd.DataFrame:
+        raw = self._call("stock_hk_spot")
+        spot = self._normalize_hk_spot(raw)
+        metrics = self._load_hk_metrics_snapshot(as_of)
+        if spot.empty:
+            return metrics
+        if metrics.empty:
+            return spot
+
+        frame = spot.merge(metrics, on="code", how="left", suffixes=("", "_metrics"))
+        for column in ["name_spot", "pe_ttm", "pb", "total_market_cap", "free_float_market_cap"]:
+            metric_column = f"{column}_metrics"
+            if metric_column in frame:
+                frame[column] = frame[column].where(frame[column].notna(), frame[metric_column])
+        return _ensure_columns(frame, _a_spot_columns()).drop_duplicates("code")
+
+    def _load_hk_metrics_snapshot(self, as_of: date) -> pd.DataFrame:
+        cache_path = self._cache_path("hk_metrics_snapshot", as_of.strftime("%Y%m%d"))
+        cached = self._read_cache(cache_path)
+        if cached is not None and not cached.empty:
+            return _ensure_columns(cached, _a_spot_columns())
+        if cached is not None and cached.empty:
+            logger.warning(
+                "Ignoring empty HK metrics cache at %s and retrying data source.",
+                cache_path,
+            )
+
+        try:
+            frame = self._fetch_hk_metrics_snapshot_from_eastmoney()
+        except Exception as exc:
+            logger.warning("Failed to fetch HK metrics snapshot from Eastmoney datacenter: %s", exc)
+            return pd.DataFrame(columns=_a_spot_columns())
+        if not frame.empty:
+            self._write_cache(cache_path, frame)
+        return frame
+
+    def _fetch_hk_metrics_snapshot_from_eastmoney(self) -> pd.DataFrame:
+        url = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+        raw = self._eastmoney_datacenter_paginated(
+            url,
+            {
+                "reportName": "RPT_CUSTOM_HKF10_FN_MAININDICATORMAX",
+                "columns": (
+                    "ORG_CODE,SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,REPORT_DATE,"
+                    "ISSUED_COMMON_SHARES,TOTAL_MARKET_CAP,HKSK_MARKET_CAP,PE_TTM,PB_TTM,"
+                    "DIVIDEND_RATE"
+                ),
+                "quoteColumns": "",
+                "pageNumber": "1",
+                "pageSize": "500",
+                "sortTypes": "-1",
+                "sortColumns": "REPORT_DATE",
+                "source": "F10",
+                "client": "PC",
+                "v": "07945646099062258",
+            },
+        )
+        if raw.empty:
+            return pd.DataFrame(columns=_a_spot_columns())
+        frame = pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["SECURITY_CODE", "SECUCODE"]).map(_normalize_hk_code),
+                "name_spot": _coalesce(raw, ["SECURITY_NAME_ABBR"]),
+                "latest_price": pd.NA,
+                "amount": pd.NA,
+                "pe_ttm": _numeric(_coalesce(raw, ["PE_TTM"])),
+                "pb": _numeric(_coalesce(raw, ["PB_TTM"])),
+                "total_market_cap": _numeric(_coalesce(raw, ["TOTAL_MARKET_CAP"])),
+                "free_float_market_cap": _numeric(_coalesce(raw, ["HKSK_MARKET_CAP"])),
+            }
+        ).dropna(subset=["code"])
+        return frame.drop_duplicates("code")
 
     def _load_a_listing_info(self, as_of: date) -> pd.DataFrame:
         seed = self._read_seed("a_listing_info.csv")
@@ -851,8 +949,13 @@ class AkShareDataProvider:
 
         cache_path = self._cache_path("hk_hsci_constituents", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
-        if cached is not None:
+        if cached is not None and not cached.empty:
             return cached
+        if cached is not None and cached.empty:
+            logger.warning(
+                "Ignoring empty HK HSCI constituent cache at %s and retrying data sources.",
+                cache_path,
+            )
 
         candidates = [
             ("stock_hk_index_cons_em", {"symbol": "恒生综合指数"}),
@@ -1433,6 +1536,21 @@ class AkShareDataProvider:
                     frames.append(frame)
         return frames
 
+    def _limited_financial_codes(self, codes: Sequence[str], limit: int) -> list[str]:
+        if not codes or limit <= 0:
+            return []
+        if len(codes) <= limit:
+            return list(codes)
+        if self._last_meta.empty or "total_market_cap" not in self._last_meta:
+            return list(codes[:limit])
+
+        rank = self._last_meta.loc[self._last_meta["code"].astype(str).isin(set(codes))].copy()
+        rank["total_market_cap"] = _numeric(rank["total_market_cap"])
+        rank = rank.sort_values("total_market_cap", ascending=False, na_position="last")
+        ordered = rank["code"].astype(str).tolist()
+        missing = [code for code in codes if code not in set(ordered)]
+        return (ordered + missing)[:limit]
+
     def _call(self, function_name: str, **kwargs: Any) -> pd.DataFrame:
         function = getattr(self.ak, function_name)
         result = _call_with_retry(function, **kwargs)
@@ -1452,6 +1570,30 @@ class AkShareDataProvider:
             frames.append(pd.DataFrame(rows))
             total = int(data.get("total") or len(rows))
             if page * page_size >= total:
+                break
+            page += 1
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
+    def _eastmoney_datacenter_paginated(
+        self,
+        url: str,
+        params: dict[str, str],
+    ) -> pd.DataFrame:
+        page = 1
+        page_size = int(params.get("pageSize", "500"))
+        frames: list[pd.DataFrame] = []
+        while True:
+            page_params = params | {"pageNumber": str(page), "pageSize": str(page_size)}
+            payload = _get_json_with_retry(url, page_params)
+            result = payload.get("result") or {}
+            rows = result.get("data") or []
+            if not rows:
+                break
+            frames.append(pd.DataFrame(rows))
+            total_pages = int(result.get("pages") or page)
+            if page >= total_pages:
                 break
             page += 1
         if not frames:
@@ -1846,6 +1988,21 @@ def _per_stock_financial_fallback_limit() -> int:
             CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT,
         )
         return CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT
+
+
+def _hk_financial_fallback_limit() -> int:
+    raw = os.environ.get("DAILYSTOCK_AKSHARE_HK_FINANCIAL_LIMIT")
+    if raw is None:
+        return HK_PER_STOCK_FINANCIAL_FALLBACK_LIMIT
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning(
+            "Invalid DAILYSTOCK_AKSHARE_HK_FINANCIAL_LIMIT=%r; using %s.",
+            raw,
+            HK_PER_STOCK_FINANCIAL_FALLBACK_LIMIT,
+        )
+        return HK_PER_STOCK_FINANCIAL_FALLBACK_LIMIT
 
 
 def _slug(value: str) -> str:
