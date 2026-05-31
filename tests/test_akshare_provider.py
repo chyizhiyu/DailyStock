@@ -5,6 +5,7 @@ from datetime import date
 import pandas as pd
 
 from dailystock.data_sources.akshare import AkShareDataProvider
+from dailystock.data_sources.akshare_seed import SEED_SCHEMAS, export_akshare_seed_files
 
 AS_OF = date(2026, 5, 29)
 
@@ -149,6 +150,33 @@ def test_akshare_provider_uses_seed_files_in_offline_mode(tmp_path) -> None:
     assert provider.load_valuation_history(None, AS_OF)["pe_ttm"].iloc[0] == 8
     assert provider.load_dividends(["600000"], AS_OF)["dividend_yield"].iloc[0] == 0.04
     assert provider.load_free_cash_flow(["600000"], AS_OF)["fcf_yield"].iloc[0] == 0.05
+
+
+def test_akshare_seed_export_writes_canonical_csvs(tmp_path) -> None:
+    seed_dir = tmp_path / "seed"
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=seed_dir,
+        ak_module=_FakeAkShare(),
+        max_workers=1,
+        use_seed=False,
+    )
+    provider._fetch_hk_spot_full_from_eastmoney = _fake_hk_spot  # noqa: SLF001
+
+    result = export_akshare_seed_files(
+        provider=provider,
+        as_of=AS_OF,
+        markets=["CN", "HK"],
+        output_dir=seed_dir,
+    )
+
+    assert set(result.codes) == {"600000", "00700"}
+    for filename, columns in SEED_SCHEMAS.items():
+        path = seed_dir / filename
+        assert path.exists()
+        assert pd.read_csv(path, nrows=0).columns.tolist() == columns
+    assert result.row_counts["daily_bars.csv"] == 40
+    assert result.row_counts["financials.csv"] == 4
 
 
 class _FakeAkShare:

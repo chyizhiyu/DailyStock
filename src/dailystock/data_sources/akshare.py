@@ -53,12 +53,14 @@ class AkShareDataProvider:
         ak_module: object | None = None,
         max_workers: int = 8,
         offline: bool | None = None,
+        use_seed: bool = True,
     ) -> None:
         self.ak = ak_module or self._import_akshare()
         self.cache_dir = Path(cache_dir or DEFAULT_CACHE_DIR)
         self.seed_dir = Path(seed_dir or DEFAULT_SEED_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.max_workers = max(1, max_workers)
+        self.use_seed = use_seed
         self.offline = (
             _truthy(os.environ.get("DAILYSTOCK_AKSHARE_OFFLINE"))
             if offline is None
@@ -1138,6 +1140,8 @@ class AkShareDataProvider:
         return self.cache_dir / f"{key}.csv"
 
     def _read_seed(self, filename: str) -> pd.DataFrame | None:
+        if not self.use_seed:
+            return None
         path = self.seed_dir / filename
         if not path.exists() or path.stat().st_size == 0:
             return None

@@ -4,6 +4,14 @@ This directory is intentionally tracked. Put manually prepared CSV snapshots her
 Actions cannot reach AkShare/Eastmoney reliably. `AkShareDataProvider` reads these files before
 network/cache data. File names are stable and do not include dates.
 
+Generate these files from a local machine that can reach AkShare:
+
+```bash
+dailystock build-akshare-seed --as-of 2026-05-29 --markets CN,HK
+```
+
+For a quick smoke test, add `--max-codes 20`. A full run should omit `--max-codes`.
+
 Required canonical files for an offline full run:
 
 | File | Required columns |
