@@ -502,16 +502,33 @@ class AkShareDataProvider:
             return cached
 
         try:
-            raw = self._call("stock_zh_a_spot_em")
+            frame = self._fetch_a_spot_full_from_eastmoney()
+            if frame.empty:
+                raise ValueError("Eastmoney A-share spot snapshot returned no rows")
         except Exception as exc:
-            logger.warning("AkShare stock_zh_a_spot_em failed, trying Sina fallback: %s", exc)
+            logger.warning(
+                "Full A-share spot snapshot failed, falling back to AkShare columns: %s",
+                exc,
+            )
             try:
-                raw = self._call("stock_zh_a_spot")
-            except Exception as fallback_exc:
-                logger.warning("Failed to fetch A-share spot snapshot: %s", fallback_exc)
-                return pd.DataFrame(columns=_a_spot_columns())
+                raw = self._call("stock_zh_a_spot_em")
+                frame = self._normalize_a_spot(raw)
+            except Exception as akshare_exc:
+                logger.warning(
+                    "AkShare stock_zh_a_spot_em failed, trying Sina fallback: %s",
+                    akshare_exc,
+                )
+                try:
+                    raw = self._call("stock_zh_a_spot")
+                    frame = self._normalize_a_spot(raw)
+                except Exception as fallback_exc:
+                    logger.warning(
+                        "Failed to fetch A-share spot snapshot: %s; previous AkShare EM error: %s",
+                        fallback_exc,
+                        akshare_exc,
+                    )
+                    return pd.DataFrame(columns=_a_spot_columns())
 
-        frame = self._normalize_a_spot(raw)
         self._write_cache(cache_path, frame)
         return frame
 
@@ -533,6 +550,55 @@ class AkShareDataProvider:
             }
         ).dropna(subset=["code"])
         return frame
+
+    def _fetch_a_spot_full_from_eastmoney(self) -> pd.DataFrame:
+        url = "https://82.push2.eastmoney.com/api/qt/clist/get"
+        base_params = {
+            "pn": "1",
+            "pz": "100",
+            "po": "1",
+            "np": "1",
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": "2",
+            "invt": "2",
+            "fid": "f12",
+            "fields": "f2,f6,f9,f12,f14,f20,f21,f23",
+        }
+
+        frames: list[pd.DataFrame] = []
+        for market_filter in [
+            "m:1 t:2,m:1 t:23",
+            "m:0 t:6,m:0 t:80",
+            "m:0 t:81 s:2048",
+        ]:
+            try:
+                raw_part = self._eastmoney_paginated(
+                    url,
+                    base_params | {"fs": market_filter},
+                )
+            except Exception as exc:
+                logger.warning("Eastmoney A-share segment failed (%s): %s", market_filter, exc)
+                continue
+            if not raw_part.empty:
+                frames.append(raw_part)
+
+        raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        if raw.empty:
+            return pd.DataFrame(columns=_a_spot_columns())
+
+        frame = pd.DataFrame(
+            {
+                "code": raw["f12"].map(_normalize_cn_code),
+                "name_spot": raw["f14"],
+                "latest_price": _numeric(raw["f2"]),
+                "amount": _numeric(raw["f6"]),
+                "pe_ttm": _numeric(raw["f9"]),
+                "pb": _numeric(raw["f23"]),
+                "total_market_cap": _numeric(raw["f20"]),
+                "free_float_market_cap": _numeric(raw["f21"]),
+            }
+        ).dropna(subset=["code"])
+        return frame.drop_duplicates("code")
 
     def _load_hk_spot(self, as_of: date) -> pd.DataFrame:
         seed = self._read_seed("hk_spot_full.csv")
@@ -1380,7 +1446,18 @@ def _call_with_retry(function: Callable[..., Any], **kwargs: Any) -> Any:
     reraise=True,
 )
 def _get_json_with_retry(url: str, params: dict[str, str]) -> dict[str, Any]:
-    response = requests.get(url, params=params, timeout=20)
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://quote.eastmoney.com/",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+    }
+    with requests.Session() as session:
+        session.trust_env = False
+        response = session.get(url, params=params, headers=headers, timeout=20)
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):

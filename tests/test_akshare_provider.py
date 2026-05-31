@@ -12,6 +12,7 @@ AS_OF = date(2026, 5, 29)
 
 def test_akshare_provider_normalizes_vendor_shapes(tmp_path) -> None:
     provider = AkShareDataProvider(cache_dir=tmp_path, ak_module=_FakeAkShare(), max_workers=1)
+    provider._fetch_a_spot_full_from_eastmoney = _fake_a_spot  # noqa: SLF001
     provider._fetch_hk_spot_full_from_eastmoney = _fake_hk_spot  # noqa: SLF001
 
     meta = provider.fetch_meta(AS_OF, ["CN", "HK"])
@@ -212,6 +213,7 @@ def test_akshare_seed_export_writes_canonical_csvs(tmp_path) -> None:
         max_workers=1,
         use_seed=False,
     )
+    provider._fetch_a_spot_full_from_eastmoney = _fake_a_spot  # noqa: SLF001
     provider._fetch_hk_spot_full_from_eastmoney = _fake_hk_spot  # noqa: SLF001
 
     result = export_akshare_seed_files(
@@ -355,6 +357,21 @@ class _FakeAkShare:
                 "现金分红-股息率": [3.1],
             }
         )
+
+
+def _fake_a_spot() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "code": ["600000"],
+            "name_spot": ["浦发银行"],
+            "latest_price": [10.0],
+            "amount": [88_000_000],
+            "pe_ttm": [8.5],
+            "pb": [0.8],
+            "total_market_cap": [600_000_000_000],
+            "free_float_market_cap": [500_000_000_000],
+        }
+    )
 
 
 def _fake_hk_spot() -> pd.DataFrame:
