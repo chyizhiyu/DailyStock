@@ -10,7 +10,9 @@ Generate these files from a local machine that can reach AkShare:
 dailystock build-akshare-seed --as-of 2026-05-29 --markets CN,HK
 ```
 
-For a quick smoke test, add `--max-codes 20`. A full run should omit `--max-codes`.
+The command defaults to `--max-workers 1` because some AkShare/Sina daily endpoints are not
+thread-safe on macOS. For a quick smoke test, add `--max-codes 20`. A full run should omit
+`--max-codes`.
 
 Required canonical files for an offline full run:
 

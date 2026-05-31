@@ -97,7 +97,7 @@ Webhook 会校验 `X-OpenClaw-Token`，其值必须等于环境变量 `DAILYSTOC
 dailystock build-akshare-seed --as-of 2026-05-29 --markets CN,HK
 ```
 
-生成完成后提交 `data/seed/akshare/*.csv` 到仓库；GitHub Actions 的手动运行页面选择同一个 `as_of`，并勾选 `offline=true`。
+生成命令默认 `--max-workers 1`，避免 AkShare 底层的新浪日线接口在并发时触发 `mini_racer` 崩溃。生成完成后提交 `data/seed/akshare/*.csv` 到仓库；GitHub Actions 的手动运行页面选择同一个 `as_of`，并勾选 `offline=true`。
 
 - AkShare: [AKShare 官方文档](https://akshare.akfamily.xyz/)
 - Tushare: [Tushare Pro 文档](https://tushare.pro/document/1?doc_id=1)

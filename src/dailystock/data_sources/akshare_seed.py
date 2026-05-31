@@ -94,11 +94,14 @@ def export_akshare_seed_files(
         frames["hk_hsci_constituents.csv"] = provider._load_hk_hsci_constituents(as_of, hk_spot)
         frames["hk_listing_info.csv"] = provider._load_hk_listing_info(as_of)
 
-    frames["daily_bars.csv"] = provider.load_daily_bars(
+    daily_bars = provider.load_daily_bars(
         codes,
         as_of=as_of,
         lookback_days=daily_lookback_days,
     )
+    frames["daily_bars.csv"] = daily_bars
+    if "a_spot.csv" in frames:
+        frames["a_spot.csv"] = _enrich_spot_with_daily_snapshot(frames["a_spot.csv"], daily_bars)
     frames["financials.csv"] = provider.load_financials(codes, as_of=as_of)
     frames["valuation_history.csv"] = provider.load_valuation_history(
         codes,
@@ -124,3 +127,32 @@ def _ensure_seed_columns(frame: pd.DataFrame, columns: Sequence[str]) -> pd.Data
         if column not in out:
             out[column] = pd.NA
     return out[list(columns)]
+
+
+def _enrich_spot_with_daily_snapshot(spot: pd.DataFrame, daily_bars: pd.DataFrame) -> pd.DataFrame:
+    if spot.empty or daily_bars.empty:
+        return spot
+    required = {"code", "trade_date", "amount", "close", "outstanding_share"}
+    if not required.issubset(daily_bars.columns):
+        return spot
+
+    latest = (
+        daily_bars.dropna(subset=["code", "trade_date"])
+        .sort_values(["code", "trade_date"])
+        .groupby("code", as_index=False)
+        .tail(1)
+    )
+    latest = latest[["code", "amount", "close", "outstanding_share"]].copy()
+    latest["snapshot_market_cap"] = latest["close"] * latest["outstanding_share"]
+
+    enriched = spot.merge(latest, on="code", how="left", suffixes=("", "_daily"))
+    for target, source in [
+        ("latest_price", "close"),
+        ("amount", "amount_daily"),
+        ("total_market_cap", "snapshot_market_cap"),
+        ("free_float_market_cap", "snapshot_market_cap"),
+    ]:
+        enriched[target] = enriched[target].combine_first(enriched[source])
+    return enriched.drop(
+        columns=["amount_daily", "close", "outstanding_share", "snapshot_market_cap"]
+    )

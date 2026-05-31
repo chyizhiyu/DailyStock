@@ -77,6 +77,10 @@ def build_akshare_seed(
         int | None,
         typer.Option("--max-codes", help="Limit stock count for smoke tests."),
     ] = None,
+    max_workers: Annotated[
+        int,
+        typer.Option("--max-workers", help="Concurrent stock fetch workers; use 1 for stability."),
+    ] = 1,
 ) -> None:
     configure_logging()
     settings = load_settings(config)
@@ -86,6 +90,7 @@ def build_akshare_seed(
     provider = AkShareDataProvider(
         cache_dir=_resolve_path(settings.app.akshare_cache_dir),
         seed_dir=seed_dir,
+        max_workers=max_workers,
         use_seed=False,
     )
     result = export_akshare_seed_files(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 CSI_ALL_SHARE = "000985"
 DEFAULT_CACHE_DIR = project_root() / "data" / "cache" / "akshare"
 DEFAULT_SEED_DIR = project_root() / "data" / "seed" / "akshare"
+SINA_DAILY_LOCK = threading.Lock()
 EMPTY_FINANCIAL_COLUMNS = [
     "code",
     "fiscal_year",
@@ -780,27 +782,64 @@ class AkShareDataProvider:
         )
         cached = self._read_cache(cache_path)
         if cached is not None:
-            return _ensure_columns(cached, ["code", "trade_date", "amount"])
+            for column in ["code", "trade_date", "amount"]:
+                if column not in cached:
+                    cached[column] = pd.NA
+            return cached
 
         try:
             if market == "HK":
-                raw = self._call(
-                    "stock_hk_hist",
-                    symbol=_normalize_hk_code(code),
-                    period="daily",
-                    start_date=start.strftime("%Y%m%d"),
-                    end_date=end.strftime("%Y%m%d"),
-                    adjust="",
-                )
+                try:
+                    raw = self._call(
+                        "stock_hk_hist",
+                        symbol=_normalize_hk_code(code),
+                        period="daily",
+                        start_date=start.strftime("%Y%m%d"),
+                        end_date=end.strftime("%Y%m%d"),
+                        adjust="",
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Eastmoney HK daily bars failed for %s, trying Sina daily: %s",
+                        code,
+                        exc,
+                    )
+                    with SINA_DAILY_LOCK:
+                        raw = self._call(
+                            "stock_hk_daily",
+                            symbol=_normalize_hk_code(code),
+                            adjust="",
+                        )
+                    raw_date = pd.to_datetime(_coalesce(raw, ["date", "日期"]), errors="coerce")
+                    raw = raw.loc[
+                        (raw_date >= pd.Timestamp(start)) & (raw_date <= pd.Timestamp(end))
+                    ]
             else:
-                raw = self._call(
-                    "stock_zh_a_hist",
-                    symbol=_normalize_cn_code(code),
-                    period="daily",
-                    start_date=start.strftime("%Y%m%d"),
-                    end_date=end.strftime("%Y%m%d"),
-                    adjust="",
-                )
+                try:
+                    raw = self._call(
+                        "stock_zh_a_hist",
+                        symbol=_normalize_cn_code(code),
+                        period="daily",
+                        start_date=start.strftime("%Y%m%d"),
+                        end_date=end.strftime("%Y%m%d"),
+                        adjust="",
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Eastmoney daily bars failed for %s, trying Sina daily: %s",
+                        code,
+                        exc,
+                    )
+                    with SINA_DAILY_LOCK:
+                        raw = self._call(
+                            "stock_zh_a_daily",
+                            symbol=_cn_sina_symbol(code),
+                            adjust="",
+                        )
+                    raw_date = pd.to_datetime(_coalesce(raw, ["date", "日期"]), errors="coerce")
+                    raw = raw.loc[
+                        (raw_date >= pd.Timestamp(start)) & (raw_date <= pd.Timestamp(end))
+                    ]
         except Exception as exc:
             logger.warning("Failed to fetch daily bars for %s: %s", code, exc)
             return pd.DataFrame(columns=["code", "trade_date", "amount"])
@@ -810,6 +849,8 @@ class AkShareDataProvider:
                 "code": code,
                 "trade_date": pd.to_datetime(_coalesce(raw, ["日期", "date"])),
                 "amount": _numeric(_coalesce(raw, ["成交额", "amount"])),
+                "close": _numeric(_coalesce(raw, ["收盘", "close"])),
+                "outstanding_share": _numeric(_coalesce(raw, ["outstanding_share"])),
             }
         ).dropna(subset=["trade_date"])
         self._write_cache(cache_path, frame)
@@ -1225,6 +1266,13 @@ def _cn_exchange(code: str) -> str:
     if code.startswith(("8", "4")):
         return "BSE"
     return "SZSE"
+
+
+def _cn_sina_symbol(code: str) -> str:
+    normalized = _normalize_cn_code(code)
+    exchange = _cn_exchange(normalized)
+    prefix = "sh" if exchange == "SSE" else "bj" if exchange == "BSE" else "sz"
+    return f"{prefix}{normalized}"
 
 
 def _coalesce(frame: pd.DataFrame, columns: Sequence[str]) -> pd.Series:
