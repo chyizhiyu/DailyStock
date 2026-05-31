@@ -15,6 +15,11 @@ on:
         required: false
         default: false
         type: boolean
+  push:
+    tags:
+      # Allows OpenClaw hosts with a write deploy key to trigger this workflow
+      # without a GitHub PAT by pushing a disposable tag.
+      - "dailystock-*"
 
 permissions:
   contents: read
