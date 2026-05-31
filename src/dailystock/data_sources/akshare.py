@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import threading
@@ -511,23 +512,33 @@ class AkShareDataProvider:
                 exc,
             )
             try:
-                raw = self._call("stock_zh_a_spot_em")
-                frame = self._normalize_a_spot(raw)
-            except Exception as akshare_exc:
+                frame = self._fetch_a_spot_full_from_sina()
+                if frame.empty:
+                    raise ValueError("Sina A-share spot snapshot returned no rows")
+            except Exception as sina_exc:
                 logger.warning(
-                    "AkShare stock_zh_a_spot_em failed, trying Sina fallback: %s",
-                    akshare_exc,
+                    "Full Sina A-share spot snapshot failed, falling back to AkShare columns: %s",
+                    sina_exc,
                 )
                 try:
-                    raw = self._call("stock_zh_a_spot")
+                    raw = self._call("stock_zh_a_spot_em")
                     frame = self._normalize_a_spot(raw)
-                except Exception as fallback_exc:
+                except Exception as akshare_exc:
                     logger.warning(
-                        "Failed to fetch A-share spot snapshot: %s; previous AkShare EM error: %s",
-                        fallback_exc,
+                        "AkShare stock_zh_a_spot_em failed, trying skinny Sina fallback: %s",
                         akshare_exc,
                     )
-                    return pd.DataFrame(columns=_a_spot_columns())
+                    try:
+                        raw = self._call("stock_zh_a_spot")
+                        frame = self._normalize_a_spot(raw)
+                    except Exception as fallback_exc:
+                        logger.warning(
+                            "Failed to fetch A-share spot snapshot: %s; "
+                            "previous AkShare EM error: %s",
+                            fallback_exc,
+                            akshare_exc,
+                        )
+                        return pd.DataFrame(columns=_a_spot_columns())
 
         self._write_cache(cache_path, frame)
         return frame
@@ -596,6 +607,49 @@ class AkShareDataProvider:
                 "pb": _numeric(raw["f23"]),
                 "total_market_cap": _numeric(raw["f20"]),
                 "free_float_market_cap": _numeric(raw["f21"]),
+            }
+        ).dropna(subset=["code"])
+        return frame.drop_duplicates("code")
+
+    def _fetch_a_spot_full_from_sina(self) -> pd.DataFrame:
+        from akshare.stock.cons import (  # noqa: PLC0415
+            zh_sina_a_stock_count_url,
+            zh_sina_a_stock_payload,
+            zh_sina_a_stock_url,
+        )
+        from akshare.utils import demjson  # noqa: PLC0415
+
+        count_text = _get_text_with_retry(zh_sina_a_stock_count_url)
+        count_matches = re.findall(r"\d+", count_text)
+        if not count_matches:
+            raise ValueError("Sina A-share count response did not include a row count")
+
+        page_size = int(zh_sina_a_stock_payload.get("num", "80"))
+        page_count = math.ceil(int(count_matches[0]) / page_size)
+        payload = zh_sina_a_stock_payload.copy()
+        frames: list[pd.DataFrame] = []
+        for page in range(1, page_count + 1):
+            payload["page"] = str(page)
+            text = _get_text_with_retry(zh_sina_a_stock_url, payload)
+            rows = demjson.decode(text)
+            if not rows:
+                continue
+            frames.append(pd.DataFrame(rows))
+
+        raw = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        if raw.empty:
+            return pd.DataFrame(columns=_a_spot_columns())
+
+        frame = pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["code", "symbol"]).map(_normalize_cn_code),
+                "name_spot": _coalesce(raw, ["name"]),
+                "latest_price": _numeric(_coalesce(raw, ["trade"])),
+                "amount": _numeric(_coalesce(raw, ["amount"])),
+                "pe_ttm": _numeric(_coalesce(raw, ["per"])),
+                "pb": _numeric(_coalesce(raw, ["pb"])),
+                "total_market_cap": _numeric(_coalesce(raw, ["mktcap"])) * 10_000,
+                "free_float_market_cap": _numeric(_coalesce(raw, ["nmc"])) * 10_000,
             }
         ).dropna(subset=["code"])
         return frame.drop_duplicates("code")
@@ -1463,6 +1517,31 @@ def _get_json_with_retry(url: str, params: dict[str, str]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Expected JSON object from Eastmoney")
     return payload
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception_type((requests.RequestException, ValueError)),
+    reraise=True,
+)
+def _get_text_with_retry(url: str, params: dict[str, str] | None = None) -> str:
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://vip.stock.finance.sina.com.cn/mkt/",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+    }
+    response = requests.get(url, params=params, headers=headers, timeout=20)
+    response.raise_for_status()
+    if response.text.lstrip().startswith("<"):
+        raise ValueError(
+            f"Expected text data response from Sina, got HTML status {response.status_code}"
+        )
+    return response.text
 
 
 def _normalize_cn_code(value: object) -> str:
