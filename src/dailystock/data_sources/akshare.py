@@ -699,8 +699,12 @@ class AkShareDataProvider:
                     raw = self._call("stock_hk_spot_em")
                     frame = self._normalize_hk_spot(raw)
                 except Exception as fallback_exc:
-                    logger.warning("Failed to fetch HK spot snapshot: %s", fallback_exc)
-                    frame = pd.DataFrame(columns=_a_spot_columns())
+                    logger.warning(
+                        "Failed to fetch HK spot snapshot: %s; falling back to "
+                        "HK metrics-only universe.",
+                        fallback_exc,
+                    )
+                    frame = self._load_hk_metrics_snapshot(as_of)
         if not frame.empty:
             self._write_cache(cache_path, frame)
         return frame
@@ -808,15 +812,18 @@ class AkShareDataProvider:
         )
         if raw.empty:
             return pd.DataFrame(columns=_a_spot_columns())
+        market_cap = _numeric(_coalesce(raw, ["TOTAL_MARKET_CAP"]))
+        issued_shares = _numeric(_coalesce(raw, ["ISSUED_COMMON_SHARES"]))
+        latest_price = market_cap / issued_shares.replace(0, pd.NA)
         frame = pd.DataFrame(
             {
                 "code": _coalesce(raw, ["SECURITY_CODE", "SECUCODE"]).map(_normalize_hk_code),
                 "name_spot": _coalesce(raw, ["SECURITY_NAME_ABBR"]),
-                "latest_price": pd.NA,
+                "latest_price": latest_price,
                 "amount": pd.NA,
                 "pe_ttm": _numeric(_coalesce(raw, ["PE_TTM"])),
                 "pb": _numeric(_coalesce(raw, ["PB_TTM"])),
-                "total_market_cap": _numeric(_coalesce(raw, ["TOTAL_MARKET_CAP"])),
+                "total_market_cap": market_cap,
                 "free_float_market_cap": _numeric(_coalesce(raw, ["HKSK_MARKET_CAP"])),
             }
         ).dropna(subset=["code"])

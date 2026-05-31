@@ -86,6 +86,38 @@ def test_akshare_provider_hk_sina_fallback_ignores_empty_cache(tmp_path) -> None
     assert row["pe_ttm"] == 14.8
 
 
+def test_akshare_provider_hk_metrics_only_fallback_when_spot_sources_fail(tmp_path) -> None:
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_FailingHongKongSpotAkShare(),
+        max_workers=1,
+    )
+    provider._fetch_hk_spot_full_from_eastmoney = _raise_hk_spot_failure  # noqa: SLF001
+    provider._load_hk_metrics_snapshot = lambda as_of: pd.DataFrame(  # noqa: ARG005, SLF001
+        {
+            "code": ["00700"],
+            "name_spot": ["腾讯控股"],
+            "latest_price": [427.2],
+            "amount": [pd.NA],
+            "pe_ttm": [14.8],
+            "pb": [3.05],
+            "total_market_cap": [3_895_000_000_000],
+            "free_float_market_cap": [3_895_000_000_000],
+        }
+    )
+
+    meta = provider.fetch_meta(AS_OF, ["HK"])
+
+    assert len(meta) == 1
+    row = meta.iloc[0]
+    assert row["code"] == "00700"
+    assert row["market"] == "HK"
+    assert row["name"] == "腾讯控股"
+    assert row["total_market_cap"] == 3_895_000_000_000
+    assert bool(row["is_suspended"]) is False
+
+
 def test_akshare_provider_uses_seed_files_in_offline_mode(tmp_path) -> None:
     seed_dir = tmp_path / "seed"
     seed_dir.mkdir()
@@ -450,6 +482,20 @@ class _FakeSinaHongKongAkShare:
                 "成交额": [1_000_000_000],
             }
         )
+
+    @staticmethod
+    def stock_ipo_hk_ths() -> pd.DataFrame:
+        return pd.DataFrame({"代码": ["00700"], "上市日期": ["2004-06-16"]})
+
+
+class _FailingHongKongSpotAkShare:
+    @staticmethod
+    def stock_hk_spot() -> pd.DataFrame:
+        raise ConnectionError("Sina HK blocked")
+
+    @staticmethod
+    def stock_hk_spot_em() -> pd.DataFrame:
+        raise ConnectionError("Eastmoney HK blocked")
 
     @staticmethod
     def stock_ipo_hk_ths() -> pd.DataFrame:
