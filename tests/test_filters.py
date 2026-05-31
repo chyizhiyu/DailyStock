@@ -94,6 +94,50 @@ def test_valuation_keeps_industry_relative_value() -> None:
     assert result.rejection_counts == {"pe_valuation_percentile": 1}
 
 
+def test_valuation_handles_candidate_snapshot_pe_pb_columns() -> None:
+    settings, _ = _settings_and_provider()
+    candidates = pd.DataFrame(
+        [
+            {
+                "code": "CN999001",
+                "name": "Snapshot Value",
+                "market": "CN",
+                "industry": "SW_Test",
+                "pe_ttm": 8.0,
+                "pb": 1.0,
+            }
+        ]
+    )
+    valuation_history = pd.DataFrame(
+        [
+            {"code": "CN999001", "date": AS_OF, "industry": "SW_Test", "pe_ttm": 8.0, "pb": 1.0},
+            {"code": "CN999002", "date": AS_OF, "industry": "SW_Test", "pe_ttm": 12.0, "pb": 1.5},
+            {"code": "CN999003", "date": AS_OF, "industry": "SW_Test", "pe_ttm": 16.0, "pb": 2.0},
+        ]
+    )
+    dividends = pd.DataFrame(
+        [
+            {"code": "CN999001", "date": AS_OF, "industry": "SW_Test", "dividend_yield": 0.04},
+            {"code": "CN999002", "date": AS_OF, "industry": "SW_Test", "dividend_yield": 0.02},
+            {"code": "CN999003", "date": AS_OF, "industry": "SW_Test", "dividend_yield": 0.03},
+        ]
+    )
+    free_cash_flow = pd.DataFrame(
+        [{"code": "CN999001", "date": AS_OF, "fcf_yield": 0.05}]
+    )
+
+    result = run_valuation_filters(
+        candidates,
+        valuation_history,
+        dividends,
+        free_cash_flow,
+        settings.valuation_filters,
+    )
+
+    assert result.candidates["code"].tolist() == ["CN999001"]
+    assert {"pe_ttm", "pb"}.issubset(result.candidates.columns)
+
+
 def _hard_result(settings, provider):
     meta = fetch_meta(provider, AS_OF, ["CN", "HK"])
     return run_hard_filters(

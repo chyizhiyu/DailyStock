@@ -41,14 +41,23 @@ def run_valuation_filters(
         .agg(["median", "count"])
     )
 
-    enriched = candidates.merge(
-        current_valuation[["code", "industry", "pe_ttm", "pb"]].rename(
-            columns={"industry": "valuation_industry"}
-        ),
-        on="code",
-        how="left",
+    enriched = candidates.copy()
+    for column in ["pe_ttm", "pb"]:
+        if column not in enriched:
+            enriched[column] = pd.NA
+
+    valuation_current = current_valuation[["code", "industry", "pe_ttm", "pb"]].rename(
+        columns={
+            "industry": "valuation_industry",
+            "pe_ttm": "valuation_pe_ttm",
+            "pb": "valuation_pb",
+        }
     )
+    enriched = enriched.merge(valuation_current, on="code", how="left")
     enriched["valuation_industry"] = enriched["valuation_industry"].fillna(enriched["industry"])
+    enriched["pe_ttm"] = _coalesce_numeric(enriched["valuation_pe_ttm"], enriched["pe_ttm"])
+    enriched["pb"] = _coalesce_numeric(enriched["valuation_pb"], enriched["pb"])
+    enriched = enriched.drop(columns=["valuation_pe_ttm", "valuation_pb"])
     enriched = enriched.merge(
         current_dividends[["code", "dividend_yield"]],
         on="code",
@@ -130,6 +139,12 @@ def _dividend_yield_ok(frame: pd.DataFrame) -> pd.Series:
     median = pd.to_numeric(frame["industry_dividend_median"], errors="coerce")
     sample_count = pd.to_numeric(frame["industry_dividend_count"], errors="coerce").fillna(0)
     return (dividend_yield > median) | ((sample_count <= 1) & (dividend_yield >= median))
+
+
+def _coalesce_numeric(primary: pd.Series, fallback: pd.Series) -> pd.Series:
+    primary_numeric = pd.to_numeric(primary, errors="coerce")
+    fallback_numeric = pd.to_numeric(fallback, errors="coerce")
+    return primary_numeric.where(primary_numeric.notna(), fallback_numeric)
 
 
 def _latest_by_code(frame: pd.DataFrame, date_column: str) -> pd.DataFrame:
