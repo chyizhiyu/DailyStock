@@ -44,6 +44,113 @@ def test_akshare_provider_normalizes_vendor_shapes(tmp_path) -> None:
     assert fcf["fcf_yield"].notna().all()
 
 
+def test_akshare_provider_uses_seed_files_in_offline_mode(tmp_path) -> None:
+    seed_dir = tmp_path / "seed"
+    seed_dir.mkdir()
+    pd.DataFrame(
+        {
+            "code": ["600000"],
+            "name": ["浦发银行"],
+            "exchange": ["SSE"],
+            "industry": ["SW_Bank"],
+        }
+    ).to_csv(seed_dir / "cn_constituents.csv", index=False)
+    pd.DataFrame(
+        {
+            "code": ["600000"],
+            "name_spot": ["浦发银行"],
+            "latest_price": [10],
+            "amount": [90_000_000],
+            "pe_ttm": [8],
+            "pb": [0.8],
+            "total_market_cap": [600_000_000_000],
+            "free_float_market_cap": [500_000_000_000],
+        }
+    ).to_csv(seed_dir / "a_spot.csv", index=False)
+    pd.DataFrame(
+        {
+            "code": ["600000"],
+            "listing_date": ["1999-11-10"],
+            "industry_listing": ["银行"],
+        }
+    ).to_csv(seed_dir / "a_listing_info.csv", index=False)
+    pd.DataFrame({"code": ["600000"], "industry_sw": ["SW_Bank"]}).to_csv(
+        seed_dir / "sw_industry.csv",
+        index=False,
+    )
+    pd.DataFrame(
+        {
+            "code": ["00700"],
+            "name_spot": ["腾讯控股"],
+            "latest_price": [300],
+            "amount": [2_000_000_000],
+            "pe_ttm": [15],
+            "pb": [3],
+            "total_market_cap": [3_000_000_000_000],
+            "free_float_market_cap": [2_500_000_000_000],
+        }
+    ).to_csv(seed_dir / "hk_spot_full.csv", index=False)
+    pd.DataFrame({"code": ["00700"], "listing_date": ["2004-06-16"]}).to_csv(
+        seed_dir / "hk_listing_info.csv",
+        index=False,
+    )
+    _fake_hist(amount=90_000_000).assign(code="600000").rename(
+        columns={"日期": "trade_date", "成交额": "amount"}
+    )[["code", "trade_date", "amount"]].to_csv(seed_dir / "daily_bars.csv", index=False)
+    pd.DataFrame(
+        {
+            "code": ["600000", "600000"],
+            "fiscal_year": [2019, 2024],
+            "roe": [0.11, 0.12],
+            "gross_margin": [0.31, 0.32],
+            "net_margin": [0.09, 0.1],
+            "debt_asset_ratio": [0.5, 0.49],
+            "operating_cash_flow": [10_000_000_000, 15_000_000_000],
+            "net_profit": [8_000_000_000, 10_000_000_000],
+            "non_gaap_net_profit": [7_000_000_000, 9_000_000_000],
+            "revenue": [100_000_000_000, 130_000_000_000],
+        }
+    ).to_csv(seed_dir / "financials.csv", index=False)
+    pd.DataFrame(
+        {
+            "code": ["600000"],
+            "date": ["2026-05-29"],
+            "industry": ["SW_Bank"],
+            "pe_ttm": [8],
+            "pb": [0.8],
+        }
+    ).to_csv(seed_dir / "valuation_history.csv", index=False)
+    pd.DataFrame(
+        {
+            "code": ["600000"],
+            "date": ["2026-05-29"],
+            "industry": ["SW_Bank"],
+            "dividend_yield": [0.04],
+        }
+    ).to_csv(seed_dir / "dividends.csv", index=False)
+    pd.DataFrame(
+        {"code": ["600000"], "date": ["2026-05-29"], "fcf_yield": [0.05]}
+    ).to_csv(seed_dir / "free_cash_flow.csv", index=False)
+
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=seed_dir,
+        ak_module=_ExplodingAkShare(),
+        max_workers=1,
+        offline=True,
+    )
+
+    meta = provider.fetch_meta(AS_OF, ["CN", "HK"])
+    assert set(meta["code"]) == {"600000", "00700"}
+    assert meta.loc[meta["code"].eq("600000"), "industry"].iloc[0] == "SW_Bank"
+    assert meta.loc[meta["code"].eq("00700"), "market"].iloc[0] == "HK"
+    assert provider.load_daily_bars(["600000"], AS_OF, lookback_days=30).shape[0] == 20
+    assert provider.load_financials(["600000"], AS_OF)["fiscal_year"].max() == 2024
+    assert provider.load_valuation_history(None, AS_OF)["pe_ttm"].iloc[0] == 8
+    assert provider.load_dividends(["600000"], AS_OF)["dividend_yield"].iloc[0] == 0.04
+    assert provider.load_free_cash_flow(["600000"], AS_OF)["fcf_yield"].iloc[0] == 0.05
+
+
 class _FakeAkShare:
     @staticmethod
     def index_stock_cons_weight_csindex(symbol: str) -> pd.DataFrame:
@@ -189,3 +296,8 @@ def _fake_hk_spot() -> pd.DataFrame:
 def _fake_hist(amount: float) -> pd.DataFrame:
     dates = pd.bdate_range(end=pd.Timestamp(AS_OF), periods=20)
     return pd.DataFrame({"日期": dates, "成交额": amount})
+
+
+class _ExplodingAkShare:
+    def __getattr__(self, name: str):
+        raise AssertionError(f"AkShare network method should not be called: {name}")

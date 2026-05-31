@@ -89,6 +89,8 @@ Webhook 会校验 `X-OpenClaw-Token`，其值必须等于环境变量 `DAILYSTOC
 
 当前默认使用 `akshare` 真数据适配器，并将网络结果缓存到 `data/cache/akshare/`。测试和离线演示仍可把 `config/default.yaml` 中的 `app.data_source` 改回 `sample`，使用 `data/samples/` 中的 CSV 样例数据。
 
+如果 GitHub Actions 访问东方财富或 AkShare 发生 `RemoteDisconnected`，可以把手动准备好的稳定快照放到 `data/seed/akshare/`。适配器会优先读取这些无日期的种子 CSV；手动触发 workflow 时可勾选 `offline=true`，或设置仓库变量 `DAILYSTOCK_AKSHARE_OFFLINE=true`，让 CI 只使用种子文件、不再访问外部行情接口。种子文件格式见 `data/seed/akshare/README.md`。
+
 - AkShare: [AKShare 官方文档](https://akshare.akfamily.xyz/)
 - Tushare: [Tushare Pro 文档](https://tushare.pro/document/1?doc_id=1)
 - 本地 DuckDB/SQLite/Parquet 数据仓库

@@ -4,6 +4,7 @@ app:
   output_dir: runs
   sample_data_dir: data/samples
   akshare_cache_dir: data/cache/akshare
+  akshare_seed_dir: data/seed/akshare
 
 markets:
   - CN

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 CSI_ALL_SHARE = "000985"
 DEFAULT_CACHE_DIR = project_root() / "data" / "cache" / "akshare"
+DEFAULT_SEED_DIR = project_root() / "data" / "seed" / "akshare"
 EMPTY_FINANCIAL_COLUMNS = [
     "code",
     "fiscal_year",
@@ -47,13 +49,21 @@ class AkShareDataProvider:
     def __init__(
         self,
         cache_dir: str | Path | None = None,
+        seed_dir: str | Path | None = None,
         ak_module: object | None = None,
         max_workers: int = 8,
+        offline: bool | None = None,
     ) -> None:
         self.ak = ak_module or self._import_akshare()
         self.cache_dir = Path(cache_dir or DEFAULT_CACHE_DIR)
+        self.seed_dir = Path(seed_dir or DEFAULT_SEED_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.max_workers = max(1, max_workers)
+        self.offline = (
+            _truthy(os.environ.get("DAILYSTOCK_AKSHARE_OFFLINE"))
+            if offline is None
+            else offline
+        )
         self._last_meta = pd.DataFrame()
         self._last_financials = pd.DataFrame(columns=EMPTY_FINANCIAL_COLUMNS)
 
@@ -96,17 +106,32 @@ class AkShareDataProvider:
     ) -> pd.DataFrame:
         code_list = self._resolve_codes(codes)
         start = as_of - timedelta(days=lookback_days)
+        seed = self._load_seed_daily_bars(code_list, start=start, end=as_of)
+        if self.offline:
+            return seed
+        present = set(seed["code"].astype(str)) if not seed.empty else set()
+        missing_codes = [code for code in code_list if code not in present]
         frames = self._map_codes(
-            code_list,
+            missing_codes,
             lambda code: self._load_daily_bar_one(code, start=start, end=as_of),
         )
+        if not seed.empty:
+            frames.append(seed)
         if not frames:
             return pd.DataFrame(columns=["code", "trade_date", "amount"])
         return pd.concat(frames, ignore_index=True).sort_values(["code", "trade_date"])
 
     def load_financials(self, codes: CodeList, as_of: date) -> pd.DataFrame:
         code_list = self._resolve_codes(codes)
-        frames = self._map_codes(code_list, lambda code: self._load_financial_one(code, as_of))
+        seed = self._load_seed_financials(code_list, as_of)
+        present = set(seed["code"].astype(str)) if not seed.empty else set()
+        missing_codes = [code for code in code_list if code not in present]
+        frames = [] if self.offline else self._map_codes(
+            missing_codes,
+            lambda code: self._load_financial_one(code, as_of),
+        )
+        if not seed.empty:
+            frames.append(seed)
         if not frames:
             financials = pd.DataFrame(columns=EMPTY_FINANCIAL_COLUMNS)
         else:
@@ -124,22 +149,25 @@ class AkShareDataProvider:
         lookback_years: int = 5,
     ) -> pd.DataFrame:
         start = pd.Timestamp(as_of) - pd.DateOffset(years=lookback_years)
+        seed = self._load_seed_valuation_history(codes, as_of, lookback_years)
         cache_path = self._cache_path(
             "industry_valuation_history",
             start.strftime("%Y%m%d"),
             as_of.strftime("%Y%m%d"),
         )
-        if codes is None:
+        if codes is None and seed.empty and not self.offline:
             cached = self._read_cache(cache_path)
             if cached is not None:
                 return _ensure_columns(cached, EMPTY_VALUATION_COLUMNS)
 
         code_list = self._resolve_codes(codes)
-        frames: list[pd.DataFrame] = []
-        if codes is not None:
+        present = set(seed["code"].astype(str)) if not seed.empty else set()
+        missing_codes = [code for code in code_list if code not in present]
+        frames: list[pd.DataFrame] = [seed] if not seed.empty else []
+        if codes is not None and not self.offline:
             frames.extend(
                 self._map_codes(
-                    code_list,
+                    missing_codes,
                     lambda code: self._load_stock_valuation_history_one(
                         code,
                         as_of=as_of,
@@ -176,7 +204,15 @@ class AkShareDataProvider:
 
     def load_dividends(self, codes: CodeList, as_of: date) -> pd.DataFrame:
         code_list = self._resolve_codes(codes)
-        frames = self._map_codes(code_list, lambda code: self._load_dividend_one(code, as_of))
+        seed = self._load_seed_dividends(code_list, as_of)
+        present = set(seed["code"].astype(str)) if not seed.empty else set()
+        missing_codes = [code for code in code_list if code not in present]
+        frames = [] if self.offline else self._map_codes(
+            missing_codes,
+            lambda code: self._load_dividend_one(code, as_of),
+        )
+        if not seed.empty:
+            frames.append(seed)
         if not frames:
             return pd.DataFrame(columns=EMPTY_DIVIDEND_COLUMNS)
         dividends = pd.concat(frames, ignore_index=True)
@@ -187,6 +223,10 @@ class AkShareDataProvider:
 
     def load_free_cash_flow(self, codes: CodeList, as_of: date) -> pd.DataFrame:
         code_list = self._resolve_codes(codes)
+        seed = self._load_seed_free_cash_flow(code_list, as_of)
+        present = set(seed["code"].astype(str)) if not seed.empty else set()
+        if self.offline or (code_list and set(code_list).issubset(present)):
+            return seed
         financials = self._last_financials
         if financials.empty or not set(code_list).issubset(set(financials["code"].astype(str))):
             financials = self.load_financials(code_list, as_of)
@@ -212,17 +252,107 @@ class AkShareDataProvider:
             ) from exc
         return ak
 
+    def _load_seed_daily_bars(
+        self,
+        codes: Sequence[str],
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        seed = self._read_seed("daily_bars.csv")
+        if seed is None:
+            return pd.DataFrame(columns=["code", "trade_date", "amount"])
+        frame = _ensure_columns(seed, ["code", "trade_date", "amount"])
+        frame["code"] = frame["code"].map(self._normalize_known_code)
+        frame["trade_date"] = pd.to_datetime(frame["trade_date"], errors="coerce")
+        frame["amount"] = _numeric(frame["amount"])
+        frame = frame.loc[
+            frame["code"].isin(codes)
+            & (frame["trade_date"] > pd.Timestamp(start))
+            & (frame["trade_date"] <= pd.Timestamp(end))
+        ]
+        return frame.dropna(subset=["code", "trade_date"]).reset_index(drop=True)
+
+    def _load_seed_financials(self, codes: Sequence[str], as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("financials.csv")
+        if seed is None:
+            return pd.DataFrame(columns=EMPTY_FINANCIAL_COLUMNS)
+        frame = _ensure_columns(seed, EMPTY_FINANCIAL_COLUMNS)
+        frame["code"] = frame["code"].map(self._normalize_known_code)
+        frame["fiscal_year"] = pd.to_numeric(frame["fiscal_year"], errors="coerce")
+        for column in EMPTY_FINANCIAL_COLUMNS:
+            if column not in {"code", "fiscal_year"}:
+                frame[column] = _numeric(frame[column])
+        return frame.loc[
+            frame["code"].isin(codes) & (frame["fiscal_year"] <= as_of.year)
+        ].reset_index(drop=True)
+
+    def _load_seed_valuation_history(
+        self,
+        codes: CodeList,
+        as_of: date,
+        lookback_years: int,
+    ) -> pd.DataFrame:
+        seed = self._read_seed("valuation_history.csv")
+        if seed is None:
+            return pd.DataFrame(columns=EMPTY_VALUATION_COLUMNS)
+        frame = _ensure_columns(seed, EMPTY_VALUATION_COLUMNS)
+        frame["code"] = frame["code"].map(self._normalize_known_code)
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+        frame["pe_ttm"] = _numeric(frame["pe_ttm"])
+        frame["pb"] = _numeric(frame["pb"])
+        start = pd.Timestamp(as_of) - pd.DateOffset(years=lookback_years)
+        frame = frame.loc[(frame["date"] >= start) & (frame["date"] <= pd.Timestamp(as_of))]
+        if codes is not None:
+            frame = frame.loc[frame["code"].isin(self._resolve_codes(codes))]
+        return frame.dropna(subset=["code", "date", "industry"]).reset_index(drop=True)
+
+    def _load_seed_dividends(self, codes: Sequence[str], as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("dividends.csv")
+        if seed is None:
+            return pd.DataFrame(columns=EMPTY_DIVIDEND_COLUMNS)
+        frame = _ensure_columns(seed, EMPTY_DIVIDEND_COLUMNS)
+        frame["code"] = frame["code"].map(self._normalize_known_code)
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+        frame["dividend_yield"] = _percent_or_decimal(frame["dividend_yield"])
+        return frame.loc[
+            frame["code"].isin(codes) & (frame["date"] <= pd.Timestamp(as_of))
+        ].reset_index(drop=True)
+
+    def _load_seed_free_cash_flow(self, codes: Sequence[str], as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("free_cash_flow.csv")
+        if seed is None:
+            return pd.DataFrame(columns=EMPTY_FCF_COLUMNS)
+        frame = _ensure_columns(seed, EMPTY_FCF_COLUMNS)
+        frame["code"] = frame["code"].map(self._normalize_known_code)
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+        frame["fcf_yield"] = _percent_or_decimal(frame["fcf_yield"])
+        return frame.loc[
+            frame["code"].isin(codes) & (frame["date"] <= pd.Timestamp(as_of))
+        ].reset_index(drop=True)
+
     def _fetch_cn_meta(self, as_of: date) -> pd.DataFrame:
         constituents = self._load_cn_constituents(as_of)
         spot = self._load_a_spot(as_of)
         listing = self._load_a_listing_info(as_of)
         sw_industry = self._load_sw_industry_map(as_of)
 
+        if constituents.empty and not spot.empty:
+            constituents = spot[["code", "name_spot"]].rename(columns={"name_spot": "name"})
+            constituents["exchange"] = constituents["code"].map(_cn_exchange)
+            constituents["industry"] = pd.NA
+        if constituents.empty:
+            return pd.DataFrame(columns=_meta_columns())
+
         frame = constituents.merge(spot, on="code", how="left", suffixes=("", "_spot"))
         frame["name"] = frame["name"].combine_first(frame.get("name_spot"))
         frame = frame.merge(listing, on="code", how="left", suffixes=("", "_listing"))
         frame = frame.merge(sw_industry, on="code", how="left", suffixes=("", "_sw"))
-        frame["industry"] = frame["industry_sw"].combine_first(frame.get("industry_listing"))
+        constituent_industry = frame.get("industry")
+        frame["industry"] = (
+            frame["industry_sw"]
+            .combine_first(frame.get("industry_listing"))
+            .combine_first(constituent_industry)
+        )
         frame["industry"] = frame["industry"].fillna(_unknown_industry("CN"))
         frame["listing_date"] = frame["listing_date"].fillna("1900-01-01")
         frame["exchange"] = frame["exchange"].fillna(frame["code"].map(_cn_exchange))
@@ -260,6 +390,13 @@ class AkShareDataProvider:
         return _ensure_columns(frame, _meta_columns())
 
     def _load_cn_constituents(self, as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("cn_constituents.csv")
+        if seed is not None:
+            return self._normalize_cn_constituents(seed)
+        if self.offline:
+            logger.warning("Offline mode enabled and cn_constituents.csv seed is missing.")
+            return pd.DataFrame(columns=["code", "name", "exchange", "industry"])
+
         cache_path = self._cache_path("cn_constituents", CSI_ALL_SHARE, as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
@@ -273,45 +410,86 @@ class AkShareDataProvider:
                 "index_stock_cons_csindex: %s",
                 exc,
             )
-            raw = self._call("index_stock_cons_csindex", symbol=CSI_ALL_SHARE)
+            try:
+                raw = self._call("index_stock_cons_csindex", symbol=CSI_ALL_SHARE)
+            except Exception as fallback_exc:
+                logger.warning("Failed to fetch CN constituents from AkShare: %s", fallback_exc)
+                return pd.DataFrame(columns=["code", "name", "exchange", "industry"])
 
-        code = _coalesce(raw, ["成分券代码", "证券代码", "品种代码", "代码"]).map(
+        frame = self._normalize_cn_constituents(raw)
+        self._write_cache(cache_path, frame)
+        return frame
+
+    def _normalize_cn_constituents(self, raw: pd.DataFrame) -> pd.DataFrame:
+        code = _coalesce(raw, ["code", "成分券代码", "证券代码", "品种代码", "代码"]).map(
             _normalize_cn_code
         )
         frame = pd.DataFrame(
             {
                 "code": code,
-                "name": _coalesce(raw, ["成分券名称", "证券简称", "名称", "简称"]),
-                "exchange": _coalesce(raw, ["交易所"]).map(_normalize_cn_exchange_name),
-                "industry": pd.NA,
+                "name": _coalesce(raw, ["name", "成分券名称", "证券简称", "名称", "简称"]),
+                "exchange": _coalesce(raw, ["exchange", "交易所"]).map(
+                    _normalize_cn_exchange_name
+                ),
+                "industry": _coalesce(raw, ["industry", "行业", "行业分类"]).replace("", pd.NA),
             }
         ).dropna(subset=["code"])
-        self._write_cache(cache_path, frame)
         return frame
 
     def _load_a_spot(self, as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("a_spot.csv")
+        if seed is not None:
+            return self._normalize_a_spot(seed)
+        if self.offline:
+            logger.warning("Offline mode enabled and a_spot.csv seed is missing.")
+            return pd.DataFrame(columns=_a_spot_columns())
+
         cache_path = self._cache_path("a_spot", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
             return cached
 
-        raw = self._call("stock_zh_a_spot_em")
-        frame = pd.DataFrame(
-            {
-                "code": _coalesce(raw, ["代码"]).map(_normalize_cn_code),
-                "name_spot": _coalesce(raw, ["名称", "简称"]),
-                "latest_price": _numeric(_coalesce(raw, ["最新价"])),
-                "amount": _numeric(_coalesce(raw, ["成交额"])),
-                "pe_ttm": _numeric(_coalesce(raw, ["市盈率-TTM", "市盈率-动态"])),
-                "pb": _numeric(_coalesce(raw, ["市净率", "市净率-MRQ"])),
-                "total_market_cap": _numeric(_coalesce(raw, ["总市值"])),
-                "free_float_market_cap": _numeric(_coalesce(raw, ["流通市值"])),
-            }
-        ).dropna(subset=["code"])
+        try:
+            raw = self._call("stock_zh_a_spot_em")
+        except Exception as exc:
+            logger.warning("AkShare stock_zh_a_spot_em failed, trying Sina fallback: %s", exc)
+            try:
+                raw = self._call("stock_zh_a_spot")
+            except Exception as fallback_exc:
+                logger.warning("Failed to fetch A-share spot snapshot: %s", fallback_exc)
+                return pd.DataFrame(columns=_a_spot_columns())
+
+        frame = self._normalize_a_spot(raw)
         self._write_cache(cache_path, frame)
         return frame
 
+    def _normalize_a_spot(self, raw: pd.DataFrame) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["code", "代码"]).map(_normalize_cn_code),
+                "name_spot": _coalesce(raw, ["name_spot", "名称", "简称"]),
+                "latest_price": _numeric(_coalesce(raw, ["latest_price", "最新价"])),
+                "amount": _numeric(_coalesce(raw, ["amount", "成交额"])),
+                "pe_ttm": _numeric(_coalesce(raw, ["pe_ttm", "市盈率-TTM", "市盈率-动态", "per"])),
+                "pb": _numeric(_coalesce(raw, ["pb", "市净率", "市净率-MRQ"])),
+                "total_market_cap": _numeric(
+                    _coalesce(raw, ["total_market_cap", "总市值", "mktcap"])
+                ),
+                "free_float_market_cap": _numeric(
+                    _coalesce(raw, ["free_float_market_cap", "流通市值", "nmc"])
+                ),
+            }
+        ).dropna(subset=["code"])
+        return frame
+
     def _load_hk_spot(self, as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("hk_spot_full.csv")
+        if seed is not None:
+            return self._normalize_hk_spot(seed)
+        if self.offline:
+            logger.warning("Offline mode enabled and hk_spot_full.csv seed is missing.")
+            return pd.DataFrame(columns=_a_spot_columns())
+
         cache_path = self._cache_path("hk_spot_full", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
@@ -321,21 +499,30 @@ class AkShareDataProvider:
             frame = self._fetch_hk_spot_full_from_eastmoney()
         except Exception as exc:
             logger.warning("Full HK spot snapshot failed, falling back to AkShare columns: %s", exc)
-            raw = self._call("stock_hk_spot_em")
-            frame = pd.DataFrame(
-                {
-                    "code": _coalesce(raw, ["代码"]).map(_normalize_hk_code),
-                    "name_spot": _coalesce(raw, ["名称", "中文名称"]),
-                    "latest_price": _numeric(_coalesce(raw, ["最新价"])),
-                    "amount": _numeric(_coalesce(raw, ["成交额"])),
-                    "pe_ttm": pd.NA,
-                    "pb": pd.NA,
-                    "total_market_cap": pd.NA,
-                    "free_float_market_cap": pd.NA,
-                }
-            ).dropna(subset=["code"])
+            try:
+                raw = self._call("stock_hk_spot_em")
+                frame = self._normalize_hk_spot(raw)
+            except Exception as fallback_exc:
+                logger.warning("Failed to fetch HK spot snapshot: %s", fallback_exc)
+                frame = pd.DataFrame(columns=_a_spot_columns())
         self._write_cache(cache_path, frame)
         return frame
+
+    def _normalize_hk_spot(self, raw: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["code", "代码"]).map(_normalize_hk_code),
+                "name_spot": _coalesce(raw, ["name_spot", "名称", "中文名称"]),
+                "latest_price": _numeric(_coalesce(raw, ["latest_price", "最新价"])),
+                "amount": _numeric(_coalesce(raw, ["amount", "成交额"])),
+                "pe_ttm": _numeric(_coalesce(raw, ["pe_ttm", "市盈率-TTM", "市盈率-动态"])),
+                "pb": _numeric(_coalesce(raw, ["pb", "市净率", "市净率-MRQ"])),
+                "total_market_cap": _numeric(_coalesce(raw, ["total_market_cap", "总市值"])),
+                "free_float_market_cap": _numeric(
+                    _coalesce(raw, ["free_float_market_cap", "流通市值"])
+                ),
+            }
+        ).dropna(subset=["code"])
 
     def _fetch_hk_spot_full_from_eastmoney(self) -> pd.DataFrame:
         url = "https://72.push2.eastmoney.com/api/qt/clist/get"
@@ -366,6 +553,13 @@ class AkShareDataProvider:
         ).dropna(subset=["code"])
 
     def _load_a_listing_info(self, as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("a_listing_info.csv")
+        if seed is not None:
+            return self._normalize_a_listing_info(seed)
+        if self.offline:
+            logger.warning("Offline mode enabled and a_listing_info.csv seed is missing.")
+            return pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
+
         cache_path = self._cache_path("a_listing_info", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
@@ -426,7 +620,27 @@ class AkShareDataProvider:
         self._write_cache(cache_path, frame)
         return frame
 
+    def _normalize_a_listing_info(self, raw: pd.DataFrame) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["code", "证券代码", "A股代码"]).map(_normalize_cn_code),
+                "listing_date": _coalesce(raw, ["listing_date", "上市日期", "A股上市日期"]),
+                "industry_listing": _coalesce(raw, ["industry_listing", "所属行业"]),
+            }
+        )
+        frame["listing_date"] = pd.to_datetime(frame["listing_date"], errors="coerce")
+        return frame.dropna(subset=["code"]).drop_duplicates("code")
+
     def _load_sw_industry_map(self, as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("sw_industry.csv")
+        if seed is not None:
+            frame = _ensure_columns(seed, ["code", "industry_sw"])
+            frame["code"] = frame["code"].map(_normalize_cn_code)
+            return frame.dropna(subset=["code"]).drop_duplicates("code")
+        if self.offline:
+            logger.warning("Offline mode enabled and sw_industry.csv seed is missing.")
+            return pd.DataFrame(columns=["code", "industry_sw"])
+
         cache_path = self._cache_path("sw_industry", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
@@ -452,6 +666,17 @@ class AkShareDataProvider:
         return frame
 
     def _load_hk_hsci_constituents(self, as_of: date, spot: pd.DataFrame) -> pd.DataFrame:
+        seed = self._read_seed("hk_hsci_constituents.csv")
+        if seed is not None:
+            return self._normalize_hk_constituents(seed)
+        if self.offline:
+            logger.warning("Offline mode enabled and hk_hsci_constituents.csv seed is missing.")
+            if spot.empty:
+                return pd.DataFrame(columns=["code", "name", "industry"])
+            frame = spot[["code", "name_spot"]].rename(columns={"name_spot": "name"}).copy()
+            frame["industry"] = _unknown_industry("HK")
+            return frame
+
         cache_path = self._cache_path("hk_hsci_constituents", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
@@ -490,16 +715,26 @@ class AkShareDataProvider:
             return pd.DataFrame(columns=["code", "name", "industry"])
         frame = pd.DataFrame(
             {
-                "code": _coalesce(raw, ["代码", "成分券代码", "证券代码"]).map(
+                "code": _coalesce(raw, ["code", "代码", "成分券代码", "证券代码"]).map(
                     _normalize_hk_code
                 ),
-                "name": _coalesce(raw, ["名称", "成分券名称", "证券简称", "中文名称"]),
-                "industry": _coalesce(raw, ["行业", "恒生行业", "行业分类"]).replace("", pd.NA),
+                "name": _coalesce(raw, ["name", "名称", "成分券名称", "证券简称", "中文名称"]),
+                "industry": _coalesce(raw, ["industry", "行业", "恒生行业", "行业分类"]).replace(
+                    "",
+                    pd.NA,
+                ),
             }
         )
         return frame.dropna(subset=["code"]).drop_duplicates("code")
 
     def _load_hk_listing_info(self, as_of: date) -> pd.DataFrame:
+        seed = self._read_seed("hk_listing_info.csv")
+        if seed is not None:
+            return self._normalize_hk_listing_info(seed)
+        if self.offline:
+            logger.warning("Offline mode enabled and hk_listing_info.csv seed is missing.")
+            return pd.DataFrame(columns=["code", "listing_date"])
+
         cache_path = self._cache_path("hk_listing_info", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
@@ -521,6 +756,16 @@ class AkShareDataProvider:
         frame = frame.dropna(subset=["code"]).drop_duplicates("code")
         self._write_cache(cache_path, frame)
         return frame
+
+    def _normalize_hk_listing_info(self, raw: pd.DataFrame) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["code", "代码", "股票代码"]).map(_normalize_hk_code),
+                "listing_date": _coalesce(raw, ["listing_date", "上市日期", "挂牌日期", "上市日"]),
+            }
+        )
+        frame["listing_date"] = pd.to_datetime(frame["listing_date"], errors="coerce")
+        return frame.dropna(subset=["code"]).drop_duplicates("code")
 
     def _load_daily_bar_one(self, code: str, start: date, end: date) -> pd.DataFrame:
         market = self._market_for_code(code)
@@ -892,6 +1137,13 @@ class AkShareDataProvider:
         key = "_".join(_slug(str(part)) for part in parts)
         return self.cache_dir / f"{key}.csv"
 
+    def _read_seed(self, filename: str) -> pd.DataFrame | None:
+        path = self.seed_dir / filename
+        if not path.exists() or path.stat().st_size == 0:
+            return None
+        logger.info("Using AkShare seed file: %s", path)
+        return pd.read_csv(path, dtype=str, low_memory=False)
+
     @staticmethod
     def _read_cache(path: Path) -> pd.DataFrame | None:
         if not path.exists() or path.stat().st_size == 0:
@@ -1064,8 +1316,25 @@ def _meta_columns() -> list[str]:
     ]
 
 
+def _a_spot_columns() -> list[str]:
+    return [
+        "code",
+        "name_spot",
+        "latest_price",
+        "amount",
+        "pe_ttm",
+        "pb",
+        "total_market_cap",
+        "free_float_market_cap",
+    ]
+
+
 def _unknown_industry(market: str) -> str:
     return "SW_UNKNOWN" if str(market).upper() == "CN" else "HS_UNKNOWN"
+
+
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _slug(value: str) -> str:

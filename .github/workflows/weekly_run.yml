@@ -5,6 +5,16 @@ on:
     # 16:30 Asia/Shanghai every Friday, 08:30 UTC.
     - cron: "30 8 * * 5"
   workflow_dispatch:
+    inputs:
+      as_of:
+        description: "Run date in YYYY-MM-DD. Empty means latest Friday in Asia/Shanghai."
+        required: false
+        type: string
+      offline:
+        description: "Use data/seed/akshare CSVs only; do not call AkShare network APIs."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -16,6 +26,8 @@ concurrency:
 env:
   TZ: Asia/Shanghai
   DAILYSTOCK_TIMEZONE: Asia/Shanghai
+  DAILYSTOCK_AKSHARE_SEED_DIR: data/seed/akshare
+  DAILYSTOCK_AKSHARE_OFFLINE: ${{ vars.DAILYSTOCK_AKSHARE_OFFLINE }}
   PYTHONUNBUFFERED: "1"
 
 jobs:
@@ -48,6 +60,34 @@ jobs:
           python3 -m pip install pandas pydantic pydantic-settings fastapi uvicorn typer pyyaml akshare tenacity requests
           python3 -m pip install -e .
 
+      - name: Resolve Shanghai as_of date
+        env:
+          AS_OF_INPUT: ${{ github.event.inputs.as_of }}
+          OFFLINE_INPUT: ${{ github.event.inputs.offline }}
+        run: |
+          AS_OF="$(python3 - <<'PY'
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          value = os.environ.get("AS_OF_INPUT", "").strip()
+          if value:
+              print(value)
+          else:
+              today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+              days_since_friday = (today.weekday() - 4) % 7
+              print((today - timedelta(days=days_since_friday)).isoformat())
+          PY
+          )"
+          echo "DAILYSTOCK_AS_OF=$AS_OF" >> "$GITHUB_ENV"
+          OFFLINE_MODE="${DAILYSTOCK_AKSHARE_OFFLINE:-false}"
+          if [ "$OFFLINE_INPUT" = "true" ]; then
+            echo "DAILYSTOCK_AKSHARE_OFFLINE=true" >> "$GITHUB_ENV"
+            OFFLINE_MODE="true"
+          fi
+          echo "Resolved DailyStock as_of=$AS_OF"
+          echo "AkShare offline mode=$OFFLINE_MODE"
+
       - name: Verify Shanghai as_of date
         run: |
           python3 - <<'PY'
@@ -59,9 +99,10 @@ jobs:
           print(f"Shanghai now: {shanghai_now.isoformat()}")
           print(f"DailyStock as_of: {parse_date(None).isoformat()}")
           PY
+          echo "Workflow as_of: ${DAILYSTOCK_AS_OF}"
 
       - name: Run DailyStock full market screen
-        run: python3 -m dailystock.cli run --markets CN,HK --dry-run
+        run: python3 -m dailystock.cli run --as-of "$DAILYSTOCK_AS_OF" --markets CN,HK --dry-run
 
       - name: Prepare report artifact
         if: always()

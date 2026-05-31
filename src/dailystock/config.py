@@ -14,6 +14,7 @@ class AppSettings(BaseModel):
     output_dir: str = "runs"
     sample_data_dir: str = "data/samples"
     akshare_cache_dir: str = "data/cache/akshare"
+    akshare_seed_dir: str = "data/seed/akshare"
 
 
 class HardFilterSettings(BaseModel):
@@ -73,6 +74,8 @@ class EnvSettings(BaseSettings):
     futu_trading_env: str | None = None
     dailystock_live_trading_enabled: bool | None = None
     dailystock_webhook_secret: str | None = None
+    dailystock_akshare_cache_dir: str | None = None
+    dailystock_akshare_seed_dir: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -95,6 +98,10 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
         settings.futu.trading_env = env.futu_trading_env
     if env.dailystock_live_trading_enabled is not None:
         settings.futu.enable_live_trading = env.dailystock_live_trading_enabled
+    if env.dailystock_akshare_cache_dir:
+        settings.app.akshare_cache_dir = env.dailystock_akshare_cache_dir
+    if env.dailystock_akshare_seed_dir:
+        settings.app.akshare_seed_dir = env.dailystock_akshare_seed_dir
 
     os.environ.setdefault("TZ", settings.app.timezone)
     return settings
