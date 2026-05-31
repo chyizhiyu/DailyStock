@@ -152,6 +152,57 @@ def test_akshare_provider_uses_seed_files_in_offline_mode(tmp_path) -> None:
     assert provider.load_free_cash_flow(["600000"], AS_OF)["fcf_yield"].iloc[0] == 0.05
 
 
+def test_akshare_daily_bars_support_spot_proxy_mode(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DAILYSTOCK_AKSHARE_DAILY_BAR_MODE", "spot-proxy")
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_ExplodingAkShare(),
+        max_workers=1,
+    )
+    provider._last_meta = pd.DataFrame(  # noqa: SLF001
+        {
+            "code": ["600000", "00700"],
+            "market": ["CN", "HK"],
+            "amount": [90_000_000, 80_000_000],
+        }
+    )
+
+    bars = provider.load_daily_bars(["600000", "00700"], AS_OF, lookback_days=30)
+
+    assert bars.groupby("code")["trade_date"].nunique().to_dict() == {
+        "600000": 20,
+        "00700": 20,
+    }
+    assert bars.groupby("code")["amount"].mean().to_dict() == {
+        "600000": 90_000_000,
+        "00700": 80_000_000,
+    }
+
+
+def test_akshare_financials_skip_non_cn_bulk_fallback_when_over_limit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT", "1")
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_ExplodingAkShare(),
+        max_workers=1,
+    )
+    provider._last_meta = pd.DataFrame(  # noqa: SLF001
+        {
+            "code": ["00700", "00005"],
+            "market": ["HK", "HK"],
+        }
+    )
+
+    financials = provider.load_financials(["00700", "00005"], AS_OF)
+
+    assert financials.empty
+
+
 def test_akshare_seed_export_writes_canonical_csvs(tmp_path) -> None:
     seed_dir = tmp_path / "seed"
     provider = AkShareDataProvider(

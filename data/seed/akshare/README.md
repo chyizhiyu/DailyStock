@@ -17,7 +17,14 @@ thread-safe on macOS. For a quick smoke test, add `--max-codes 20`. A full run s
 Online CI runs use AkShare's A-share annual bulk financial tables before trying per-stock
 financial endpoints. If those bulk tables fail, `DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT`
 caps the number of per-stock fallbacks so the workflow fails gracefully instead of hanging for
-hours.
+hours. The same cap also applies to Hong Kong per-stock financial endpoints; provide
+`financials.csv` when you want a strict HK fundamental scan in CI.
+
+The weekly GitHub Actions workflow uses `DAILYSTOCK_AKSHARE_DAILY_BAR_MODE=spot-proxy` by
+default. In that mode, Step 2 liquidity is derived from the post-close all-market turnover
+snapshot and expanded to 20 effective trading days. For a strict real 20-day turnover scan,
+provide `daily_bars.csv` here or set `DAILYSTOCK_AKSHARE_DAILY_BAR_MODE=history` in the
+workflow environment.
 
 Required canonical files for an offline full run:
 

@@ -109,7 +109,8 @@ AkShare 适配器当前覆盖：
 - A 股：通过 `index_stock_cons_weight_csindex(symbol="000985")` 获取中证全指成分股，并用全市场行情快照补充成交额、市值、PE/PB；申万行业分类来自 `stock_industry_clf_hist_sw()`。
 - 港股：优先尝试 AkShare 中可用的恒生综合指数成分接口；若当前 AkShare 版本未暴露稳定 HSCI 成分接口，则使用港股全市场快照作为港股初筛池，并保留 `HS_UNKNOWN` 行业兜底。
 - 历史数据：A 股年度财报优先使用东方财富全市场年度表批量合成，避免在 CI 中逐股请求几千次；日线、港股财报、估值、分红等接口带 3 次指数退避重试，并写入本地缓存。
-- CI 兜底：`DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT` 默认限制 A 股财报逐股 fallback 数量，防止批量表失败后拖垮整条 workflow。
+- CI 兜底：GitHub Actions 默认设置 `DAILYSTOCK_AKSHARE_DAILY_BAR_MODE=spot-proxy`，用收盘后的全市场成交额快照生成 Step 2 所需的 20 个有效交易日流动性输入，避免逐股拉取 30 日 K 线导致超时。若要严格使用真实 20 日 K 线，请提供 `data/seed/akshare/daily_bars.csv` 或把该变量改为 `history`。
+- CI 兜底：`DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT` 默认限制逐股财报 fallback 数量；A 股优先走批量表，港股若超过上限则需要 seed 财报文件，否则会在 Step 2 的财务底线处被剔除。
 
 第二、三、四步只依赖本地日线与历史财报/估值数据；实时盘口只允许进入第五步。
 

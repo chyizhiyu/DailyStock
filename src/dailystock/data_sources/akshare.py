@@ -25,6 +25,7 @@ DEFAULT_SEED_DIR = project_root() / "data" / "seed" / "akshare"
 SINA_DAILY_LOCK = threading.Lock()
 CN_BULK_FINANCIAL_LOOKBACK_YEARS = 6
 CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT = 80
+DAILY_BAR_PROXY_THRESHOLD = 300
 EMPTY_FINANCIAL_COLUMNS = [
     "code",
     "fiscal_year",
@@ -117,6 +118,15 @@ class AkShareDataProvider:
             return seed
         present = set(seed["code"].astype(str)) if not seed.empty else set()
         missing_codes = [code for code in code_list if code not in present]
+        if _should_use_spot_daily_proxy(len(missing_codes)):
+            proxy = self._daily_bars_from_spot_snapshot(missing_codes, as_of, lookback_days)
+            frames = [proxy] if not proxy.empty else []
+            if not seed.empty:
+                frames.append(seed)
+            if not frames:
+                return pd.DataFrame(columns=["code", "trade_date", "amount"])
+            return pd.concat(frames, ignore_index=True).sort_values(["code", "trade_date"])
+
         frames = self._map_codes(
             missing_codes,
             lambda code: self._load_daily_bar_one(code, start=start, end=as_of),
@@ -158,12 +168,20 @@ class AkShareDataProvider:
                     len(cn_codes),
                     fallback_limit,
                 )
-            frames.extend(
-                self._map_codes(
-                    other_codes,
-                    lambda code: self._load_financial_one(code, as_of),
+            if other_codes and len(other_codes) <= fallback_limit:
+                frames.extend(
+                    self._map_codes(
+                        other_codes,
+                        lambda code: self._load_financial_one(code, as_of),
+                    )
                 )
-            )
+            elif other_codes:
+                logger.warning(
+                    "Skipping %s non-CN per-stock financial loads; provide seed "
+                    "financials.csv for HK fundamentals or raise "
+                    "DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT.",
+                    len(other_codes),
+                )
         if not seed.empty:
             frames.append(seed)
         if not frames:
@@ -886,6 +904,35 @@ class AkShareDataProvider:
         self._write_cache(cache_path, frame)
         return frame
 
+    def _daily_bars_from_spot_snapshot(
+        self,
+        codes: Sequence[str],
+        as_of: date,
+        lookback_days: int,
+    ) -> pd.DataFrame:
+        if not codes or self._last_meta.empty:
+            return pd.DataFrame(columns=["code", "trade_date", "amount"])
+
+        meta = self._last_meta.loc[self._last_meta["code"].astype(str).isin(set(codes))].copy()
+        meta["amount"] = _numeric(meta["amount"])
+        meta = meta.loc[meta["amount"].notna()]
+        if meta.empty:
+            return pd.DataFrame(columns=["code", "trade_date", "amount"])
+
+        periods = min(20, max(1, lookback_days))
+        dates = pd.bdate_range(end=pd.Timestamp(as_of), periods=periods)
+        start = pd.Timestamp(as_of) - pd.Timedelta(days=lookback_days)
+        dates = dates[(dates > start) & (dates <= pd.Timestamp(as_of))]
+        logger.warning(
+            "Using spot-derived daily bar proxy for %s codes. This keeps CI full-market scans "
+            "bounded; provide data/seed/akshare/daily_bars.csv or set "
+            "DAILYSTOCK_AKSHARE_DAILY_BAR_MODE=history for strict 20-day liquidity.",
+            len(meta),
+        )
+        frame = meta.loc[meta.index.repeat(len(dates)), ["code", "amount"]].reset_index(drop=True)
+        frame["trade_date"] = list(dates) * len(meta)
+        return frame[["code", "trade_date", "amount"]]
+
     def _load_financial_one(self, code: str, as_of: date) -> pd.DataFrame:
         market = self._market_for_code(code)
         cache_path = self._cache_path("financials", market, code, as_of.year)
@@ -1598,6 +1645,36 @@ def _unknown_industry(market: str) -> str:
 
 def _truthy(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _should_use_spot_daily_proxy(missing_count: int) -> bool:
+    mode = os.environ.get("DAILYSTOCK_AKSHARE_DAILY_BAR_MODE", "auto").strip().lower()
+    if mode in {"history", "historical", "strict"}:
+        return False
+    if mode in {"spot_proxy", "spot-proxy", "proxy"}:
+        return missing_count > 0
+    if mode == "auto":
+        return missing_count >= _daily_bar_proxy_threshold()
+    logger.warning(
+        "Unknown DAILYSTOCK_AKSHARE_DAILY_BAR_MODE=%s; falling back to auto.",
+        mode,
+    )
+    return missing_count >= _daily_bar_proxy_threshold()
+
+
+def _daily_bar_proxy_threshold() -> int:
+    raw = os.environ.get("DAILYSTOCK_AKSHARE_DAILY_BAR_PROXY_THRESHOLD")
+    if raw is None:
+        return DAILY_BAR_PROXY_THRESHOLD
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning(
+            "Invalid DAILYSTOCK_AKSHARE_DAILY_BAR_PROXY_THRESHOLD=%s; using %s.",
+            raw,
+            DAILY_BAR_PROXY_THRESHOLD,
+        )
+        return DAILY_BAR_PROXY_THRESHOLD
 
 
 def _per_stock_financial_fallback_limit() -> int:
