@@ -1,0 +1,82 @@
+{
+  "request": {
+    "as_of": "2026-05-29",
+    "markets": [
+      "CN",
+      "HK"
+    ],
+    "dry_run": true
+  },
+  "final_candidates": [],
+  "steps": [
+    {
+      "name": "step1_fetch_meta",
+      "input_count": 0,
+      "output_count": 6288,
+      "elapsed_seconds": 225.826438743,
+      "rejection_counts": {},
+      "artifacts": [
+        "/home/runner/work/DailyStock/DailyStock/runs/20260529/step1_meta.csv"
+      ]
+    },
+    {
+      "name": "step2_hard_filters",
+      "input_count": 6288,
+      "output_count": 0,
+      "elapsed_seconds": 0.04137807199998633,
+      "rejection_counts": {
+        "risk_screen": 642,
+        "listing_age": 388,
+        "liquidity": 5258
+      },
+      "artifacts": [
+        "/home/runner/work/DailyStock/DailyStock/runs/20260529/step2_hard_filters_candidates.csv",
+        "/home/runner/work/DailyStock/DailyStock/runs/20260529/step2_hard_filters_rejected.csv"
+      ]
+    },
+    {
+      "name": "step3_financial_quality",
+      "input_count": 0,
+      "output_count": 0,
+      "elapsed_seconds": 0.012556503999974211,
+      "rejection_counts": {},
+      "artifacts": [
+        "/home/runner/work/DailyStock/DailyStock/runs/20260529/step3_financial_quality_candidates.csv"
+      ]
+    },
+    {
+      "name": "step4_valuation",
+      "input_count": 0,
+      "output_count": 0,
+      "elapsed_seconds": 0.008664360000011584,
+      "rejection_counts": {},
+      "artifacts": [
+        "/home/runner/work/DailyStock/DailyStock/runs/20260529/step4_valuation_candidates.csv"
+      ]
+    },
+    {
+      "name": "step5_futu_executor",
+      "input_count": 0,
+      "output_count": 0,
+      "elapsed_seconds": 0.0008181329999956688,
+      "rejection_counts": {},
+      "artifacts": [
+        "/home/runner/work/DailyStock/DailyStock/runs/20260529/step5_scanned.csv",
+        "/home/runner/work/DailyStock/DailyStock/runs/20260529/step5_execution_plan.csv"
+      ]
+    }
+  ],
+  "execution_plan": [],
+  "artifacts": [
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/step1_meta.csv",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/step2_hard_filters_candidates.csv",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/step2_hard_filters_rejected.csv",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/step3_financial_quality_candidates.csv",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/step4_valuation_candidates.csv",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/step5_scanned.csv",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/step5_execution_plan.csv",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/dashboard.md",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/feishu_summary.md",
+    "/home/runner/work/DailyStock/DailyStock/runs/20260529/result.json"
+  ]
+}
