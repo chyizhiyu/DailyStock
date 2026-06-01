@@ -46,6 +46,21 @@ def test_hard_filters_reject_hk_suffix_even_without_vendor_flag() -> None:
     assert result.rejection_counts == {"risk_screen": 1}
 
 
+def test_hard_filters_reject_hk_fullwidth_w_suffix() -> None:
+    settings, _ = _settings_and_provider()
+    meta = _minimal_meta(code="00020", name="商汤－Ｗ", market="HK")
+    result = run_hard_filters(
+        meta,
+        _daily_bars("00020", days=20, amount=60_000_000),
+        _hard_financials("00020"),
+        AS_OF,
+        settings.hard_filters,
+    )
+
+    assert result.candidates.empty
+    assert result.rejection_counts == {"risk_screen": 1}
+
+
 def test_hard_filters_reject_liquidity_when_effective_days_under_20() -> None:
     settings, _ = _settings_and_provider()
     meta = _minimal_meta(code="HK12345", name="Harbor Quality", market="HK")

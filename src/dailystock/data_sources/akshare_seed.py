@@ -40,7 +40,7 @@ SEED_SCHEMAS: dict[str, list[str]] = {
         "total_market_cap",
         "free_float_market_cap",
     ],
-    "hk_listing_info.csv": ["code", "listing_date"],
+    "hk_listing_info.csv": ["code", "listing_date", "industry_listing"],
     "daily_bars.csv": ["code", "trade_date", "amount"],
     "financials.csv": EMPTY_FINANCIAL_COLUMNS,
     "valuation_history.csv": EMPTY_VALUATION_COLUMNS,

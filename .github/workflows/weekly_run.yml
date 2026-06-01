@@ -19,7 +19,7 @@ on:
       - "dailystock-*"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: weekly-dailystock-run
@@ -138,6 +138,7 @@ jobs:
           if [ -n "$RUN_DIR" ]; then
             cp -R "$RUN_DIR" "reports/$(basename "$RUN_DIR")"
             [ -f "$RUN_DIR/dashboard.md" ] && cp "$RUN_DIR/dashboard.md" reports/dashboard.md
+            [ -f "$RUN_DIR/feishu_summary.md" ] && cp "$RUN_DIR/feishu_summary.md" reports/feishu_summary.md
             [ -f "$RUN_DIR/result.json" ] && cp "$RUN_DIR/result.json" reports/result.json
             if [ -f "$RUN_DIR/result.json" ]; then
               python3 - "$RUN_DIR/result.json" <<'PY'
@@ -161,6 +162,19 @@ jobs:
           fi
           find reports -maxdepth 3 -type f -print
 
+      - name: Print Feishu-readable summary
+        if: always()
+        run: |
+          if [ -f reports/feishu_summary.md ]; then
+            cat reports/feishu_summary.md
+            cat reports/feishu_summary.md >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f reports/dashboard.md ]; then
+            cat reports/dashboard.md
+            cat reports/dashboard.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "DailyStock did not produce a summary file." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload DailyStock artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -169,7 +183,44 @@ jobs:
           path: |
             reports/
             runs/**/dashboard.md
+            runs/**/feishu_summary.md
             runs/**/step4_valuation_candidates.csv
             runs/**/result.json
           retention-days: 7
           if-no-files-found: warn
+
+      - name: Publish latest report branch
+        if: always()
+        run: |
+          if [ ! -f reports/feishu_summary.md ]; then
+            echo "No Feishu summary to publish."
+            exit 0
+          fi
+
+          TMP_REPORT_DIR="$(mktemp -d)"
+          cp -R reports "$TMP_REPORT_DIR/reports"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin dailystock-results || true
+          if git show-ref --verify --quiet refs/remotes/origin/dailystock-results; then
+            git checkout -B dailystock-results origin/dailystock-results
+          else
+            git checkout --orphan dailystock-results
+            git rm -rf . || true
+          fi
+
+          RUN_KEY="${DAILYSTOCK_AS_OF//-/}"
+          mkdir -p latest "history/$RUN_KEY"
+          cp "$TMP_REPORT_DIR/reports/feishu_summary.md" latest/feishu_summary.md
+          cp "$TMP_REPORT_DIR/reports/dashboard.md" latest/dashboard.md 2>/dev/null || true
+          cp "$TMP_REPORT_DIR/reports/result.json" latest/result.json 2>/dev/null || true
+          cp "$TMP_REPORT_DIR/reports/final_candidates.csv" latest/final_candidates.csv 2>/dev/null || true
+          cp -R latest/. "history/$RUN_KEY/"
+
+          git add latest "history/$RUN_KEY"
+          git commit -m "chore: publish DailyStock report $DAILYSTOCK_AS_OF" || {
+            echo "No report changes to publish."
+            exit 0
+          }
+          git push origin dailystock-results

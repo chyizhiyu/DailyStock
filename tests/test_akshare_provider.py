@@ -14,6 +14,7 @@ def test_akshare_provider_normalizes_vendor_shapes(tmp_path) -> None:
     provider = AkShareDataProvider(cache_dir=tmp_path, ak_module=_FakeAkShare(), max_workers=1)
     provider._fetch_a_spot_full_from_eastmoney = _fake_a_spot  # noqa: SLF001
     provider._fetch_hk_spot_full_from_eastmoney = _fake_hk_spot  # noqa: SLF001
+    provider._fetch_hk_listing_info_from_eastmoney = _fake_hk_listing  # noqa: SLF001
 
     meta = provider.fetch_meta(AS_OF, ["CN", "HK"])
 
@@ -62,6 +63,8 @@ def test_akshare_provider_hk_sina_fallback_ignores_empty_cache(tmp_path) -> None
         encoding="utf-8",
     )
     provider._fetch_hk_spot_full_from_eastmoney = _raise_hk_spot_failure  # noqa: SLF001
+    provider._fetch_hk_spot_full_from_sina_direct = _raise_hk_spot_failure  # noqa: SLF001
+    provider._fetch_hk_listing_info_from_eastmoney = _fake_hk_listing  # noqa: SLF001
     provider._load_hk_metrics_snapshot = lambda as_of: pd.DataFrame(  # noqa: ARG005, SLF001
         {
             "code": ["00700"],
@@ -86,6 +89,52 @@ def test_akshare_provider_hk_sina_fallback_ignores_empty_cache(tmp_path) -> None
     assert row["pe_ttm"] == 14.8
 
 
+def test_akshare_provider_enriches_cached_hk_turnover(tmp_path) -> None:
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_ExplodingAkShare(),
+        max_workers=1,
+    )
+    provider._cache_path("hk_spot_full", AS_OF.strftime("%Y%m%d")).write_text(  # noqa: SLF001
+        "code,name_spot,latest_price,amount,pe_ttm,pb,total_market_cap,free_float_market_cap\n"
+        "00700,腾讯控股,427.2,,14.8,3.05,3895000000000,3895000000000\n",
+        encoding="utf-8",
+    )
+    provider._fetch_hk_spot_full_from_sina_direct = lambda as_of: pd.DataFrame(  # noqa: ARG005, SLF001
+        {
+            "code": ["00700"],
+            "name_spot": ["腾讯控股"],
+            "latest_price": [427.2],
+            "amount": [1_533_000_000],
+            "pe_ttm": [14.8],
+            "pb": [3.05],
+            "total_market_cap": [3_895_000_000_000],
+            "free_float_market_cap": [3_895_000_000_000],
+        }
+    )
+
+    spot = provider._load_hk_spot(AS_OF)  # noqa: SLF001
+
+    assert spot.set_index("code").loc["00700", "amount"] == 1_533_000_000
+
+
+def test_akshare_provider_uses_eastmoney_hk_listing_profile(tmp_path) -> None:
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_ExplodingAkShare(),
+        max_workers=1,
+    )
+    provider._fetch_hk_listing_info_from_eastmoney = _fake_hk_listing  # noqa: SLF001
+
+    listing = provider._load_hk_listing_info(AS_OF)  # noqa: SLF001
+
+    row = listing.set_index("code").loc["00700"]
+    assert row["listing_date"] == pd.Timestamp("2004-06-16")
+    assert row["industry_listing"] == "软件服务"
+
+
 def test_akshare_provider_hk_metrics_only_fallback_when_spot_sources_fail(tmp_path) -> None:
     provider = AkShareDataProvider(
         cache_dir=tmp_path / "cache",
@@ -94,6 +143,8 @@ def test_akshare_provider_hk_metrics_only_fallback_when_spot_sources_fail(tmp_pa
         max_workers=1,
     )
     provider._fetch_hk_spot_full_from_eastmoney = _raise_hk_spot_failure  # noqa: SLF001
+    provider._fetch_hk_spot_full_from_sina_direct = _raise_hk_spot_failure  # noqa: SLF001
+    provider._fetch_hk_listing_info_from_eastmoney = _fake_hk_listing  # noqa: SLF001
     provider._load_hk_metrics_snapshot = lambda as_of: pd.DataFrame(  # noqa: ARG005, SLF001
         {
             "code": ["00700"],
@@ -288,6 +339,7 @@ def test_akshare_seed_export_writes_canonical_csvs(tmp_path) -> None:
     )
     provider._fetch_a_spot_full_from_eastmoney = _fake_a_spot  # noqa: SLF001
     provider._fetch_hk_spot_full_from_eastmoney = _fake_hk_spot  # noqa: SLF001
+    provider._fetch_hk_listing_info_from_eastmoney = _fake_hk_listing  # noqa: SLF001
 
     result = export_akshare_seed_files(
         provider=provider,
@@ -458,6 +510,16 @@ def _fake_hk_spot() -> pd.DataFrame:
             "pb": [4.0],
             "total_market_cap": [3_800_000_000_000],
             "free_float_market_cap": [3_500_000_000_000],
+        }
+    )
+
+
+def _fake_hk_listing() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "code": ["00700"],
+            "listing_date": [pd.Timestamp("2004-06-16")],
+            "industry_listing": ["软件服务"],
         }
     )
 

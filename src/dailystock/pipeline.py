@@ -33,6 +33,7 @@ from dailystock.models.screening import (
 )
 from dailystock.reports.dashboard import build_dashboard
 from dailystock.reports.exporters import export_dataframe, export_json
+from dailystock.reports.feishu import build_feishu_summary
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,16 @@ class DailyStockPipeline:
         dashboard_path = run_dir / "dashboard.md"
         dashboard_path.write_text(dashboard, encoding="utf-8")
         artifacts.append(str(dashboard_path))
+
+        feishu_summary = build_feishu_summary(
+            request=request,
+            steps=steps,
+            candidates=valuation_result.candidates,
+            execution_plan=execution_result.execution_plan,
+        )
+        feishu_summary_path = run_dir / "feishu_summary.md"
+        feishu_summary_path.write_text(feishu_summary, encoding="utf-8")
+        artifacts.append(str(feishu_summary_path))
 
         result = PipelineResult(
             request=request,

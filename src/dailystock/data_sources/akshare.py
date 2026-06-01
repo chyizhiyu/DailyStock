@@ -436,10 +436,13 @@ class AkShareDataProvider:
         frame = frame.merge(listing, on="code", how="left", suffixes=("", "_listing"))
         frame["market"] = "HK"
         frame["exchange"] = "HKEX"
-        frame["industry"] = frame["industry"].fillna(_unknown_industry("HK"))
+        industry = frame["industry"].replace(_unknown_industry("HK"), pd.NA)
+        frame["industry"] = industry.combine_first(frame.get("industry_listing")).fillna(
+            _unknown_industry("HK")
+        )
         frame["listing_date"] = frame["listing_date"].fillna("1900-01-01")
-        name = frame["name"].fillna("").astype(str).str.upper()
-        code = frame["code"].fillna("").astype(str).str.upper()
+        name = _hk_suffix_text(frame["name"])
+        code = _hk_suffix_text(frame["code"])
         frame["is_st"] = False
         frame["is_suspended"] = _numeric(frame.get("latest_price")).isna() | _numeric(
             frame.get("amount")
@@ -675,6 +678,16 @@ class AkShareDataProvider:
         cache_path = self._cache_path("hk_spot_full", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None and not cached.empty:
+            cached = _ensure_columns(cached, _a_spot_columns())
+            if _has_usable_amount(cached):
+                return cached
+            logger.warning(
+                "Cached HK spot snapshot has no usable turnover; enriching from Sina snapshot."
+            )
+            enriched = self._supplement_hk_spot_turnover(cached, as_of)
+            if _has_usable_amount(enriched):
+                self._write_cache(cache_path, enriched)
+                return enriched
             return cached
         if cached is not None and cached.empty:
             logger.warning(
@@ -687,24 +700,38 @@ class AkShareDataProvider:
             if frame.empty:
                 raise ValueError("Eastmoney HK spot snapshot returned no rows")
         except Exception as exc:
-            logger.warning("Full HK spot snapshot failed, falling back to Sina HK spot: %s", exc)
+            logger.warning(
+                "Full HK spot snapshot failed, falling back to direct Sina HK spot: %s",
+                exc,
+            )
             try:
-                frame = self._fetch_hk_spot_full_from_sina(as_of)
-            except Exception as sina_exc:
+                frame = self._fetch_hk_spot_full_from_sina_direct(as_of)
+                if frame.empty or not _has_usable_amount(frame):
+                    raise ValueError("Sina HK spot snapshot returned no usable turnover")
+            except Exception as direct_sina_exc:
                 logger.warning(
-                    "Sina HK spot snapshot failed, trying AkShare EM fallback: %s",
-                    sina_exc,
+                    "Direct Sina HK spot failed, trying AkShare Sina wrapper: %s",
+                    direct_sina_exc,
                 )
                 try:
-                    raw = self._call("stock_hk_spot_em")
-                    frame = self._normalize_hk_spot(raw)
-                except Exception as fallback_exc:
+                    frame = self._fetch_hk_spot_full_from_sina(as_of)
+                    if frame.empty or not _has_usable_amount(frame):
+                        raise ValueError("AkShare Sina HK spot returned no usable turnover")
+                except Exception as sina_exc:
                     logger.warning(
-                        "Failed to fetch HK spot snapshot: %s; falling back to "
-                        "HK metrics-only universe.",
-                        fallback_exc,
+                        "Sina HK spot snapshot failed, trying AkShare EM fallback: %s",
+                        sina_exc,
                     )
-                    frame = self._load_hk_metrics_snapshot(as_of)
+                    try:
+                        raw = self._call("stock_hk_spot_em")
+                        frame = self._normalize_hk_spot(raw)
+                    except Exception as fallback_exc:
+                        logger.warning(
+                            "Failed to fetch HK spot snapshot: %s; falling back to "
+                            "HK metrics-only universe.",
+                            fallback_exc,
+                        )
+                        frame = self._load_hk_metrics_snapshot(as_of)
         if not frame.empty:
             self._write_cache(cache_path, frame)
         return frame
@@ -716,11 +743,15 @@ class AkShareDataProvider:
                 "name_spot": _coalesce(raw, ["name_spot", "名称", "中文名称"]),
                 "latest_price": _numeric(_coalesce(raw, ["latest_price", "最新价"])),
                 "amount": _numeric(_coalesce(raw, ["amount", "成交额"])),
-                "pe_ttm": _numeric(_coalesce(raw, ["pe_ttm", "市盈率-TTM", "市盈率-动态"])),
-                "pb": _numeric(_coalesce(raw, ["pb", "市净率", "市净率-MRQ"])),
-                "total_market_cap": _numeric(_coalesce(raw, ["total_market_cap", "总市值"])),
+                "pe_ttm": _numeric(
+                    _coalesce(raw, ["pe_ttm", "市盈率-TTM", "市盈率-动态", "市盈率", "pe_ratio"])
+                ),
+                "pb": _numeric(_coalesce(raw, ["pb", "市净率", "市净率-MRQ", "PB_TTM"])),
+                "total_market_cap": _numeric(
+                    _coalesce(raw, ["total_market_cap", "总市值", "总市值(港元)"])
+                ),
                 "free_float_market_cap": _numeric(
-                    _coalesce(raw, ["free_float_market_cap", "流通市值"])
+                    _coalesce(raw, ["free_float_market_cap", "流通市值", "港股市值(港元)"])
                 ),
             }
         ).dropna(subset=["code"])
@@ -756,6 +787,27 @@ class AkShareDataProvider:
     def _fetch_hk_spot_full_from_sina(self, as_of: date) -> pd.DataFrame:
         raw = self._call("stock_hk_spot")
         spot = self._normalize_hk_spot(raw)
+        return self._merge_hk_spot_metrics(spot, as_of)
+
+    def _fetch_hk_spot_full_from_sina_direct(self, as_of: date) -> pd.DataFrame:
+        raw = _fetch_sina_hk_spot_pages()
+        if raw.empty:
+            return pd.DataFrame(columns=_a_spot_columns())
+        spot = pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["symbol", "代码"]).map(_normalize_hk_code),
+                "name_spot": _coalesce(raw, ["name", "中文名称"]),
+                "latest_price": _numeric(_coalesce(raw, ["lasttrade", "最新价"])),
+                "amount": _numeric(_coalesce(raw, ["amount", "成交额"])),
+                "pe_ttm": pd.NA,
+                "pb": pd.NA,
+                "total_market_cap": pd.NA,
+                "free_float_market_cap": pd.NA,
+            }
+        ).dropna(subset=["code"])
+        return self._merge_hk_spot_metrics(spot, as_of)
+
+    def _merge_hk_spot_metrics(self, spot: pd.DataFrame, as_of: date) -> pd.DataFrame:
         metrics = self._load_hk_metrics_snapshot(as_of)
         if spot.empty:
             return metrics
@@ -763,10 +815,37 @@ class AkShareDataProvider:
             return spot
 
         frame = spot.merge(metrics, on="code", how="left", suffixes=("", "_metrics"))
+        for column in ["pe_ttm", "pb", "total_market_cap", "free_float_market_cap"]:
+            if column in frame:
+                values = _numeric(frame[column])
+                frame[column] = frame[column].where(values.gt(0), pd.NA)
         for column in ["name_spot", "pe_ttm", "pb", "total_market_cap", "free_float_market_cap"]:
             metric_column = f"{column}_metrics"
             if metric_column in frame:
                 frame[column] = frame[column].where(frame[column].notna(), frame[metric_column])
+        return _ensure_columns(frame, _a_spot_columns()).drop_duplicates("code")
+
+    def _supplement_hk_spot_turnover(self, spot: pd.DataFrame, as_of: date) -> pd.DataFrame:
+        try:
+            fresh = self._fetch_hk_spot_full_from_sina_direct(as_of)
+        except Exception as exc:
+            logger.warning("Failed to supplement HK turnover from Sina: %s", exc)
+            return _ensure_columns(spot, _a_spot_columns())
+        if fresh.empty:
+            return _ensure_columns(spot, _a_spot_columns())
+
+        frame = _ensure_columns(spot, _a_spot_columns()).merge(
+            _ensure_columns(fresh, _a_spot_columns()),
+            on="code",
+            how="left",
+            suffixes=("", "_fresh"),
+        )
+        for column in _a_spot_columns():
+            if column == "code":
+                continue
+            fresh_column = f"{column}_fresh"
+            if fresh_column in frame:
+                frame[column] = frame[column].where(frame[column].notna(), frame[fresh_column])
         return _ensure_columns(frame, _a_spot_columns()).drop_duplicates("code")
 
     def _load_hk_metrics_snapshot(self, as_of: date) -> pd.DataFrame:
@@ -1015,28 +1094,106 @@ class AkShareDataProvider:
             return self._normalize_hk_listing_info(seed)
         if self.offline:
             logger.warning("Offline mode enabled and hk_listing_info.csv seed is missing.")
-            return pd.DataFrame(columns=["code", "listing_date"])
+            return pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
 
         cache_path = self._cache_path("hk_listing_info", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None:
-            return cached
+            cached = self._normalize_hk_listing_info(cached)
+            if _has_usable_listing_dates(cached):
+                return cached
+            logger.warning(
+                "Cached HK listing snapshot has no usable listing dates; rebuilding from "
+                "Eastmoney security profile."
+            )
 
         try:
-            raw = self._call("stock_ipo_hk_ths")
+            frame = self._fetch_hk_listing_info_from_eastmoney()
         except Exception as exc:
-            logger.warning("Failed to fetch HK IPO listing info: %s", exc)
-            return pd.DataFrame(columns=["code", "listing_date"])
+            logger.warning("Failed to fetch HK listing info from Eastmoney profile: %s", exc)
+            frame = pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
+        if frame.empty or not _has_usable_listing_dates(frame):
+            try:
+                raw = self._call("stock_ipo_hk_ths")
+            except Exception as exc:
+                logger.warning("Failed to fetch HK IPO listing info fallback: %s", exc)
+                return pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
+            frame = self._normalize_hk_listing_info(raw)
+
+        if not frame.empty:
+            self._write_cache(cache_path, frame)
+        return frame
+
+    def _fetch_hk_listing_info_from_eastmoney(self) -> pd.DataFrame:
+        url = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+        security = self._eastmoney_datacenter_paginated(
+            url,
+            {
+                "reportName": "RPT_HKF10_INFO_SECURITYINFO",
+                "columns": (
+                    "SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,SECURITY_TYPE,LISTING_DATE,"
+                    "BOARD,TRADE_MARKET"
+                ),
+                "quoteColumns": "",
+                "pageNumber": "1",
+                "pageSize": "500",
+                "sortTypes": "",
+                "sortColumns": "",
+                "source": "F10",
+                "client": "PC",
+                "v": "04748497219912483",
+            },
+        )
+        if security.empty:
+            return pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
 
         frame = pd.DataFrame(
             {
-                "code": _coalesce(raw, ["代码", "股票代码"]).map(_normalize_hk_code),
-                "listing_date": _coalesce(raw, ["上市日期", "挂牌日期", "上市日"]),
+                "code": _coalesce(security, ["SECURITY_CODE", "SECUCODE"]).map(
+                    _normalize_hk_code
+                ),
+                "listing_date": _coalesce(security, ["LISTING_DATE"]),
+            }
+        ).dropna(subset=["code"])
+
+        industry = self._fetch_hk_industry_listing_from_eastmoney()
+        if not industry.empty:
+            frame = frame.merge(industry, on="code", how="left")
+        else:
+            frame["industry_listing"] = pd.NA
+
+        frame["listing_date"] = pd.to_datetime(frame["listing_date"], errors="coerce")
+        return frame.drop_duplicates("code")
+
+    def _fetch_hk_industry_listing_from_eastmoney(self) -> pd.DataFrame:
+        url = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+        try:
+            raw = self._eastmoney_datacenter_paginated(
+                url,
+                {
+                    "reportName": "RPT_HKF10_INFO_ORGPROFILE",
+                    "columns": "SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,BELONG_INDUSTRY",
+                    "quoteColumns": "",
+                    "pageNumber": "1",
+                    "pageSize": "500",
+                    "sortTypes": "",
+                    "sortColumns": "",
+                    "source": "F10",
+                    "client": "PC",
+                    "v": "04748497219912483",
+                },
+            )
+        except Exception as exc:
+            logger.warning("Failed to fetch HK industry listing profile: %s", exc)
+            return pd.DataFrame(columns=["code", "industry_listing"])
+
+        frame = pd.DataFrame(
+            {
+                "code": _coalesce(raw, ["SECURITY_CODE", "SECUCODE"]).map(_normalize_hk_code),
+                "industry_listing": _coalesce(raw, ["BELONG_INDUSTRY"]).replace("", pd.NA),
             }
         )
-        frame["listing_date"] = pd.to_datetime(frame["listing_date"], errors="coerce")
         frame = frame.dropna(subset=["code"]).drop_duplicates("code")
-        self._write_cache(cache_path, frame)
         return frame
 
     def _normalize_hk_listing_info(self, raw: pd.DataFrame) -> pd.DataFrame:
@@ -1044,6 +1201,10 @@ class AkShareDataProvider:
             {
                 "code": _coalesce(raw, ["code", "代码", "股票代码"]).map(_normalize_hk_code),
                 "listing_date": _coalesce(raw, ["listing_date", "上市日期", "挂牌日期", "上市日"]),
+                "industry_listing": _coalesce(
+                    raw,
+                    ["industry_listing", "所属行业", "行业", "BELONG_INDUSTRY"],
+                ).replace("", pd.NA),
             }
         )
         frame["listing_date"] = pd.to_datetime(frame["listing_date"], errors="coerce")
@@ -1693,6 +1854,57 @@ def _get_text_with_retry(url: str, params: dict[str, str] | None = None) -> str:
     return response.text
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception_type((requests.RequestException, ValueError)),
+    reraise=True,
+)
+def _get_sina_json_with_retry(url: str, params: dict[str, str]) -> list[dict[str, Any]]:
+    headers = {
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Referer": "https://vip.stock.finance.sina.com.cn/mkt/",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+    }
+    with requests.Session() as session:
+        session.trust_env = False
+        response = session.get(url, params=params, headers=headers, timeout=20)
+    response.raise_for_status()
+    if response.text.lstrip().startswith("<"):
+        raise ValueError(f"Expected Sina JSON payload, got HTML status {response.status_code}")
+    payload = response.json()
+    if not isinstance(payload, list):
+        raise ValueError("Expected JSON list from Sina HK spot endpoint")
+    return payload
+
+
+def _fetch_sina_hk_spot_pages() -> pd.DataFrame:
+    url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHKStockData"
+    base_params = {
+        "page": "1",
+        "num": "60",
+        "sort": "symbol",
+        "asc": "1",
+        "node": "qbgg_hk",
+        "_s_r_a": "init",
+    }
+    frames: list[pd.DataFrame] = []
+    for page in range(1, 100):
+        rows = _get_sina_json_with_retry(url, base_params | {"page": str(page)})
+        if not rows:
+            break
+        frames.append(pd.DataFrame(rows))
+        if len(rows) < int(base_params["num"]):
+            break
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
 def _normalize_cn_code(value: object) -> str:
     if pd.isna(value):
         return ""
@@ -1712,6 +1924,16 @@ def _normalize_hk_code(value: object) -> str:
     if not matches:
         return ""
     return matches[-1][-5:].zfill(5)
+
+
+def _hk_suffix_text(values: object) -> pd.Series:
+    series = values if isinstance(values, pd.Series) else pd.Series(values)
+    return (
+        series.fillna("")
+        .astype(str)
+        .str.upper()
+        .str.translate(str.maketrans({"－": "-", "—": "-", "Ｗ": "W", "Ｓ": "S"}))
+    )
 
 
 def _normalize_cn_exchange_name(value: object) -> str | None:
@@ -1965,6 +2187,21 @@ def _should_use_spot_daily_proxy(missing_count: int) -> bool:
         mode,
     )
     return missing_count >= _daily_bar_proxy_threshold()
+
+
+def _has_usable_amount(frame: pd.DataFrame) -> bool:
+    if frame.empty or "amount" not in frame:
+        return False
+    amount = _numeric(frame["amount"])
+    return bool(amount.gt(0).sum() > 0)
+
+
+def _has_usable_listing_dates(frame: pd.DataFrame) -> bool:
+    if frame.empty or "listing_date" not in frame:
+        return False
+    listing = pd.to_datetime(frame["listing_date"], errors="coerce")
+    plausible = listing.notna() & listing.gt(pd.Timestamp("1901-01-01"))
+    return bool(plausible.sum() > 0)
 
 
 def _daily_bar_proxy_threshold() -> int:

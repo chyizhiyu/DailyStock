@@ -36,7 +36,7 @@ Required canonical files for an offline full run:
 | `sw_industry.csv` | `code,industry_sw` |
 | `hk_hsci_constituents.csv` | `code,name,industry` |
 | `hk_spot_full.csv` | `code,name_spot,latest_price,amount,pe_ttm,pb,total_market_cap,free_float_market_cap` |
-| `hk_listing_info.csv` | `code,listing_date` |
+| `hk_listing_info.csv` | `code,listing_date,industry_listing` |
 | `daily_bars.csv` | `code,trade_date,amount` |
 | `financials.csv` | `code,fiscal_year,roe,gross_margin,net_margin,debt_asset_ratio,operating_cash_flow,net_profit,non_gaap_net_profit,revenue` |
 | `valuation_history.csv` | `code,date,industry,pe_ttm,pb` |

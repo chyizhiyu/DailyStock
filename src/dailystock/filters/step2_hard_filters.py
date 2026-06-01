@@ -153,8 +153,8 @@ def _turnover_ok(frame: pd.DataFrame, settings: HardFilterSettings) -> pd.Series
 
 
 def _hk_restricted_suffix(frame: pd.DataFrame) -> pd.Series:
-    code = frame.get("code", pd.Series("", index=frame.index)).fillna("").astype(str).str.upper()
-    name = frame.get("name", pd.Series("", index=frame.index)).fillna("").astype(str).str.upper()
+    code = _hk_suffix_text(frame.get("code", pd.Series("", index=frame.index)))
+    name = _hk_suffix_text(frame.get("name", pd.Series("", index=frame.index)))
     code_restricted = code.str.endswith(("W", "SS")) | code.str.contains(
         r"[-_.](?:W|SS)$",
         regex=True,
@@ -164,3 +164,13 @@ def _hk_restricted_suffix(frame: pd.DataFrame) -> pd.Series:
         regex=True,
     )
     return code_restricted | name_restricted
+
+
+def _hk_suffix_text(values: object) -> pd.Series:
+    series = values if isinstance(values, pd.Series) else pd.Series(values)
+    return (
+        series.fillna("")
+        .astype(str)
+        .str.upper()
+        .str.translate(str.maketrans({"－": "-", "—": "-", "Ｗ": "W", "Ｓ": "S"}))
+    )

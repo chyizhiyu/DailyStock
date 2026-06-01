@@ -37,12 +37,15 @@ Step 5 Futu Executor       selected candidates only
 
 ## 多因子看板
 
-每次运行会在 `runs/YYYYMMDD/` 下生成 CSV、JSON 和 `dashboard.md`：
+每次运行会在 `runs/YYYYMMDD/` 下生成 CSV、JSON、`dashboard.md` 和
+`feishu_summary.md`：
 
 - 漏斗收缩：每一步输入数量、输出数量、拒绝原因与耗时。
 - 财务质量：ROE、毛利率、净利率、资产负债率、经营现金流 / 净利润、营收 CAGR、净利润 CAGR。
 - 估值性价比：行业 5 年 PE/PB 历史分位、股息率相对行业中位数、自由现金流收益率。
 - 执行观察：买一卖一、spread bps、量能信号、是否可交易、dry-run 动作计划。
+- 飞书摘要：漏斗表、Step 5 动作统计、WATCH/BUY 清单和跳过原因，方便 OpenClaw
+  直接贴回飞书。
 
 ## 快速开始
 
@@ -107,12 +110,26 @@ dailystock build-akshare-seed --as-of 2026-05-29 --markets CN,HK
 AkShare 适配器当前覆盖：
 
 - A 股：通过 `index_stock_cons_weight_csindex(symbol="000985")` 获取中证全指成分股，并用全市场行情快照补充成交额、市值、PE/PB；申万行业分类来自 `stock_industry_clf_hist_sw()`。
-- 港股：优先尝试 AkShare 中可用的恒生综合指数成分接口；若当前 AkShare 版本未暴露稳定 HSCI 成分接口，则使用港股全市场快照作为港股初筛池，并保留 `HS_UNKNOWN` 行业兜底。
+- 港股：优先尝试 AkShare 中可用的恒生综合指数成分接口；若当前 AkShare 版本未暴露稳定 HSCI 成分接口，则使用港股全市场快照作为港股初筛池。行情成交额优先来自全市场快照，东方财富 push2 被断开时会自动回退到新浪港股全市场行情；上市日期和行业兜底来自东方财富港股证券资料全量表。
 - 历史数据：A 股年度财报优先使用东方财富全市场年度表批量合成，避免在 CI 中逐股请求几千次；日线、港股财报、估值、分红等接口带 3 次指数退避重试，并写入本地缓存。
 - CI 兜底：GitHub Actions 默认设置 `DAILYSTOCK_AKSHARE_DAILY_BAR_MODE=spot-proxy`，用收盘后的全市场成交额快照生成 Step 2 所需的 20 个有效交易日流动性输入，避免逐股拉取 30 日 K 线导致超时。若要严格使用真实 20 日 K 线，请提供 `data/seed/akshare/daily_bars.csv` 或把该变量改为 `history`。
 - CI 兜底：`DAILYSTOCK_AKSHARE_PER_STOCK_FINANCIAL_LIMIT` 默认限制逐股财报 fallback 数量；A 股优先走批量表，港股若超过上限则需要 seed 财报文件，否则会在 Step 2 的财务底线处被剔除。
 
 第二、三、四步只依赖本地日线与历史财报/估值数据；实时盘口只允许进入第五步。
+
+## OpenClaw 与飞书结果
+
+`weekly_run.yml` 会把 `feishu_summary.md` 打印到 GitHub Actions Step Summary，并上传到
+artifact。同时，workflow 会把最近一次结果发布到 `dailystock-results` 分支：
+
+- `latest/feishu_summary.md`
+- `latest/dashboard.md`
+- `latest/result.json`
+- `latest/final_candidates.csv`
+
+OpenClaw 触发 tag 后，只需要等待对应 GitHub Actions run 成功，再从
+`dailystock-results:latest/feishu_summary.md` 读取 Markdown 内容并贴回飞书；这样不依赖
+GitHub artifact 下载权限。
 
 ## 安全边界
 
