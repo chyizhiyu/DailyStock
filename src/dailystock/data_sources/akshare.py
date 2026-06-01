@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import re
+import socket
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,6 +21,7 @@ from dailystock.data_sources.base import CodeList, DataProviderNotConfigured
 
 logger = logging.getLogger(__name__)
 
+AKSHARE_SOCKET_TIMEOUT_ENV = "DAILYSTOCK_AKSHARE_SOCKET_TIMEOUT"
 CSI_ALL_SHARE = "000985"
 DEFAULT_CACHE_DIR = project_root() / "data" / "cache" / "akshare"
 DEFAULT_SEED_DIR = project_root() / "data" / "seed" / "akshare"
@@ -43,6 +45,25 @@ EMPTY_FINANCIAL_COLUMNS = [
 EMPTY_VALUATION_COLUMNS = ["code", "date", "industry", "pe_ttm", "pb"]
 EMPTY_DIVIDEND_COLUMNS = ["code", "date", "industry", "dividend_yield"]
 EMPTY_FCF_COLUMNS = ["code", "date", "fcf_yield"]
+
+
+def _configure_socket_timeout() -> None:
+    """Bound AkShare internals that call requests without a timeout."""
+    raw_value = os.environ.get(AKSHARE_SOCKET_TIMEOUT_ENV, "20").strip()
+    try:
+        timeout = float(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid %s=%r; using 20 seconds.",
+            AKSHARE_SOCKET_TIMEOUT_ENV,
+            raw_value,
+        )
+        timeout = 20.0
+    if timeout > 0:
+        socket.setdefaulttimeout(timeout)
+
+
+_configure_socket_timeout()
 
 
 class AkShareDataProvider:
