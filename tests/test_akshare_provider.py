@@ -163,6 +163,50 @@ def test_akshare_provider_rebuilds_sparse_hk_listing_cache(tmp_path) -> None:
     assert listing.set_index("code").loc["00005", "listing_date"] == pd.Timestamp("1980-01-02")
 
 
+def test_akshare_provider_rebuilds_stale_valuation_industry_cache(tmp_path) -> None:
+    provider = AkShareDataProvider(cache_dir=tmp_path, ak_module=_FakeAkShare(), max_workers=1)
+    provider._fetch_a_spot_full_from_eastmoney = _fake_a_spot  # noqa: SLF001
+    provider._fetch_hk_spot_full_from_eastmoney = _fake_hk_spot  # noqa: SLF001
+    provider._fetch_hk_listing_info_from_eastmoney = _fake_hk_listing  # noqa: SLF001
+
+    provider.fetch_meta(AS_OF, ["CN", "HK"])
+    cache_path = provider._cache_path(  # noqa: SLF001
+        "industry_valuation_history",
+        "20210529",
+        "20260529",
+    )
+    cache_path.write_text(
+        "code,date,industry,pe_ttm,pb\n00700,2026-05-29,HS_UNKNOWN,18,4\n",
+        encoding="utf-8",
+    )
+
+    valuation = provider.load_valuation_history(None, AS_OF, lookback_years=5)
+
+    by_code = valuation.set_index("code")
+    assert by_code.loc["00700", "industry"] == "HS_IT"
+    assert by_code.loc["600000", "industry"] == "SW_480301"
+
+
+def test_akshare_provider_repairs_cached_hk_dividend_industry(tmp_path) -> None:
+    provider = AkShareDataProvider(cache_dir=tmp_path, ak_module=_FakeAkShare(), max_workers=1)
+    provider._fetch_a_spot_full_from_eastmoney = _fake_a_spot  # noqa: SLF001
+    provider._fetch_hk_spot_full_from_eastmoney = _fake_hk_spot  # noqa: SLF001
+    provider._fetch_hk_listing_info_from_eastmoney = _fake_hk_listing  # noqa: SLF001
+
+    provider.fetch_meta(AS_OF, ["HK"])
+    cache_path = provider._cache_path("dividend", "HK", "00700", AS_OF.year)  # noqa: SLF001
+    cache_path.write_text(
+        "code,date,industry,dividend_yield\n700,2026-05-29,HS_UNKNOWN,0.012\n",
+        encoding="utf-8",
+    )
+
+    dividends = provider.load_dividends(["00700"], AS_OF)
+
+    row = dividends.iloc[0]
+    assert row["code"] == "00700"
+    assert row["industry"] == "HS_IT"
+
+
 def test_akshare_provider_hk_metrics_only_fallback_when_spot_sources_fail(tmp_path) -> None:
     provider = AkShareDataProvider(
         cache_dir=tmp_path / "cache",

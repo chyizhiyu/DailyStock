@@ -22,6 +22,8 @@ class StepSummary(BaseModel):
     output_count: int
     elapsed_seconds: float
     rejection_counts: dict[str, int] = Field(default_factory=dict)
+    output_market_counts: dict[str, int] = Field(default_factory=dict)
+    rejected_market_counts: dict[str, int] = Field(default_factory=dict)
     artifacts: list[str] = Field(default_factory=list)
 
 
@@ -45,4 +47,3 @@ class ExecutionFrameResult:
     scanned: pd.DataFrame
     execution_plan: pd.DataFrame
     orders: list[dict[str, Any]] = field(default_factory=list)
-

@@ -251,6 +251,7 @@ class DailyStockPipeline:
             input_count=input_count,
             output_count=len(frame),
             elapsed_seconds=time.perf_counter() - started,
+            output_market_counts=_market_counts(frame),
         )
         return frame, summary
 
@@ -268,6 +269,8 @@ class DailyStockPipeline:
             output_count=len(result.candidates),
             elapsed_seconds=time.perf_counter() - started,
             rejection_counts=result.rejection_counts,
+            output_market_counts=_market_counts(result.candidates),
+            rejected_market_counts=_market_counts(result.rejected),
         )
         return result, summary
 
@@ -289,6 +292,8 @@ class DailyStockPipeline:
             rejection_counts=skipped["decision_reason"].value_counts().to_dict()
             if not skipped.empty
             else {},
+            output_market_counts=_market_counts(result.execution_plan),
+            rejected_market_counts=_market_counts(skipped),
         )
         return result, summary
 
@@ -370,11 +375,22 @@ def _log_step_summary(label: str, summary: StepSummary) -> None:
     reclaimed = max(summary.input_count - summary.output_count, 0)
     logger.info(
         "[%s] Input: %s stocks, Output: %s stocks, Reclaimed: %s stocks, "
-        "Time elapsed: %.3f s, Rejections: %s",
+        "Time elapsed: %.3f s, Rejections: %s, Output markets: %s, Rejected markets: %s",
         label,
         summary.input_count,
         summary.output_count,
         reclaimed,
         summary.elapsed_seconds,
         summary.rejection_counts or {},
+        summary.output_market_counts or {},
+        summary.rejected_market_counts or {},
     )
+
+
+def _market_counts(frame: pd.DataFrame) -> dict[str, int]:
+    if frame.empty or "market" not in frame:
+        return {}
+    return {
+        str(market): int(count)
+        for market, count in frame["market"].fillna("UNKNOWN").value_counts().items()
+    }

@@ -32,6 +32,9 @@ def build_dashboard(
             f"{step.elapsed_seconds:.3f} |"
         )
 
+    lines.extend(["", "## Market Coverage", ""])
+    lines.append(_market_coverage_table(steps, request.markets))
+
     lines.extend(["", "## Final Candidates", ""])
     if candidates.empty:
         lines.append("_No candidates survived the valuation funnel._")
@@ -102,3 +105,20 @@ def _format_cell(value: object) -> str:
     if isinstance(value, float):
         return f"{value:.4g}"
     return str(value)
+
+
+def _market_coverage_table(steps: list[StepSummary], markets: list[str]) -> str:
+    headers = ["Step"]
+    for market in markets:
+        headers.extend([f"{market} Out", f"{market} Rejected"])
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---"] + ["---:"] * (len(headers) - 1)) + " |",
+    ]
+    for step in steps:
+        row = [step.name]
+        for market in markets:
+            row.append(str(step.output_market_counts.get(str(market), 0)))
+            row.append(str(step.rejected_market_counts.get(str(market), 0)))
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)

@@ -234,10 +234,18 @@ class AkShareDataProvider:
             start.strftime("%Y%m%d"),
             as_of.strftime("%Y%m%d"),
         )
+        current_snapshot = self._current_valuation_cross_section(as_of)
         if codes is None and seed.empty and not self.offline:
             cached = self._read_cache(cache_path)
             if cached is not None and not cached.empty:
-                return _ensure_columns(cached, EMPTY_VALUATION_COLUMNS)
+                cached = self._normalize_valuation_history(cached, as_of, lookback_years)
+                if _valuation_cache_matches_current_industries(cached, current_snapshot):
+                    return cached
+                logger.warning(
+                    "Cached valuation history at %s has stale or incomplete industry "
+                    "coverage; rebuilding from the current market snapshot.",
+                    cache_path,
+                )
             if cached is not None and cached.empty:
                 logger.warning(
                     "Ignoring empty valuation history cache at %s and rebuilding.",
@@ -260,7 +268,6 @@ class AkShareDataProvider:
                 )
             )
 
-        current_snapshot = self._current_valuation_cross_section(as_of)
         if codes is not None:
             needed_industries = set(
                 self._industry_for_code(code)
@@ -388,6 +395,21 @@ class AkShareDataProvider:
         frame = frame.loc[(frame["date"] >= start) & (frame["date"] <= pd.Timestamp(as_of))]
         if codes is not None:
             frame = frame.loc[frame["code"].isin(self._resolve_codes(codes))]
+        return frame.dropna(subset=["code", "date", "industry"]).reset_index(drop=True)
+
+    def _normalize_valuation_history(
+        self,
+        raw: pd.DataFrame,
+        as_of: date,
+        lookback_years: int,
+    ) -> pd.DataFrame:
+        frame = _ensure_columns(raw, EMPTY_VALUATION_COLUMNS)
+        frame["code"] = frame["code"].map(self._normalize_known_code)
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+        frame["pe_ttm"] = _numeric(frame["pe_ttm"])
+        frame["pb"] = _numeric(frame["pb"])
+        start = pd.Timestamp(as_of) - pd.DateOffset(years=lookback_years)
+        frame = frame.loc[(frame["date"] >= start) & (frame["date"] <= pd.Timestamp(as_of))]
         return frame.dropna(subset=["code", "date", "industry"]).reset_index(drop=True)
 
     def _load_seed_dividends(self, codes: Sequence[str], as_of: date) -> pd.DataFrame:
@@ -1669,7 +1691,17 @@ class AkShareDataProvider:
         cache_path = self._cache_path("dividend", market, code, as_of.year)
         cached = self._read_cache(cache_path)
         if cached is not None:
-            return _ensure_columns(cached, EMPTY_DIVIDEND_COLUMNS)
+            frame = _ensure_columns(cached, EMPTY_DIVIDEND_COLUMNS)
+            frame["code"] = code
+            known_industry = self._industry_for_code(code)
+            if known_industry is not None and not _is_unknown_industry(known_industry):
+                stale = frame["industry"].isna() | frame["industry"].astype(str).map(
+                    _is_unknown_industry
+                )
+                if stale.any():
+                    frame.loc[stale, "industry"] = known_industry
+                    self._write_cache(cache_path, frame)
+            return frame
 
         try:
             if market == "HK":
@@ -2226,6 +2258,59 @@ def _a_spot_columns() -> list[str]:
 
 def _unknown_industry(market: str) -> str:
     return "SW_UNKNOWN" if str(market).upper() == "CN" else "HS_UNKNOWN"
+
+
+def _is_unknown_industry(value: object) -> bool:
+    if pd.isna(value):
+        return True
+    text = str(value).strip().upper()
+    return text in {"", "NAN", "NONE", "NA", "<NA>", "SW_UNKNOWN", "HS_UNKNOWN"}
+
+
+def _valuation_cache_matches_current_industries(
+    cached: pd.DataFrame,
+    current_snapshot: pd.DataFrame,
+    *,
+    min_ratio: float = 0.8,
+) -> bool:
+    if cached.empty or current_snapshot.empty:
+        return True
+    if "code" not in cached or "industry" not in cached:
+        return False
+
+    expected = current_snapshot[["code", "industry"]].copy()
+    expected = expected.loc[~expected["industry"].map(_is_unknown_industry)]
+    if expected.empty:
+        return True
+
+    dated = cached.copy()
+    dated["date"] = pd.to_datetime(dated["date"], errors="coerce")
+    latest = (
+        dated.dropna(subset=["code", "industry"])
+        .sort_values(["code", "date"])
+        .groupby("code", as_index=False)
+        .tail(1)
+    )
+    if latest.empty:
+        return False
+
+    merged = expected.merge(
+        latest[["code", "industry"]],
+        on="code",
+        how="left",
+        suffixes=("_expected", "_cached"),
+    )
+    matched = merged["industry_cached"].fillna("").eq(merged["industry_expected"])
+    ratio = float(matched.mean()) if len(merged) else 1.0
+    if ratio < min_ratio:
+        logger.warning(
+            "Valuation cache industry coverage is %.1f%% (%s/%s), below %.0f%% threshold.",
+            ratio * 100,
+            int(matched.sum()),
+            len(merged),
+            min_ratio * 100,
+        )
+    return ratio >= min_ratio
 
 
 def _truthy(value: str | None) -> bool:

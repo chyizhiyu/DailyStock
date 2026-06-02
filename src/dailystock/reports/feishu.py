@@ -45,6 +45,9 @@ def build_feishu_summary(
             + " |"
         )
 
+    lines.extend(["", "## Market Coverage", ""])
+    lines.append(_market_coverage_table(steps, request.markets))
+
     lines.extend(["", "## Step 5 Decisions", ""])
     if execution_plan.empty or "action" not in execution_plan:
         lines.append("_No execution plan was produced._")
@@ -139,3 +142,20 @@ def _markdown_table(frame: pd.DataFrame) -> str:
 
 def _format_rejections(values: Mapping[str, int]) -> str:
     return ", ".join(f"{key}: {value}" for key, value in values.items()) or "-"
+
+
+def _market_coverage_table(steps: Sequence[StepSummary], markets: Sequence[str]) -> str:
+    headers = ["Step"]
+    for market in markets:
+        headers.extend([f"{market} Out", f"{market} Rejected"])
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---"] + ["---:"] * (len(headers) - 1)) + " |",
+    ]
+    for step in steps:
+        row = [step.name]
+        for market in markets:
+            row.append(str(step.output_market_counts.get(str(market), 0)))
+            row.append(str(step.rejected_market_counts.get(str(market), 0)))
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
