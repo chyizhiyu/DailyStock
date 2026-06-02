@@ -163,6 +163,57 @@ jobs:
           fi
           find reports -maxdepth 3 -type f -print
 
+      - name: Attach GitHub run metadata
+        if: always()
+        run: |
+          if [ ! -f reports/feishu_summary.md ]; then
+            echo "No Feishu summary to annotate."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+
+          summary_path = Path("reports/feishu_summary.md")
+          run_url = (
+              f"{os.environ['GITHUB_SERVER_URL']}/"
+              f"{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
+              f"{os.environ['GITHUB_RUN_ID']}"
+          )
+          ref_type = os.environ.get("GITHUB_REF_TYPE", "")
+          ref_name = os.environ.get("GITHUB_REF_NAME", "")
+          tag = ref_name if ref_type == "tag" else ""
+          metadata = {
+              "as_of": os.environ.get("DAILYSTOCK_AS_OF", ""),
+              "tag": tag,
+              "ref": os.environ.get("GITHUB_REF", ""),
+              "source_sha": os.environ.get("GITHUB_SHA", ""),
+              "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+              "run_number": os.environ.get("GITHUB_RUN_NUMBER", ""),
+              "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+              "run_url": run_url,
+              "generated_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(),
+          }
+          Path("reports/run_metadata.json").write_text(
+              json.dumps(metadata, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          prefix = [
+              "# DailyStock GitHub Actions Result",
+              "",
+              f"- Tag: `{tag or '-'}`",
+              f"- Run: [#{metadata['run_number']}]({run_url})",
+              f"- Source commit: `{metadata['source_sha'][:12]}`",
+              f"- Run attempt: `{metadata['run_attempt']}`",
+              "",
+          ]
+          summary = summary_path.read_text(encoding="utf-8")
+          summary_path.write_text("\n".join(prefix) + "\n" + summary, encoding="utf-8")
+          PY
+
       - name: Print Feishu-readable summary
         if: always()
         run: |
@@ -176,6 +227,38 @@ jobs:
             echo "DailyStock did not produce a summary file." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Send Feishu bot notification
+        if: always()
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.DAILYSTOCK_FEISHU_WEBHOOK_URL }}
+        run: |
+          if [ -z "$FEISHU_WEBHOOK_URL" ]; then
+            echo "DAILYSTOCK_FEISHU_WEBHOOK_URL secret is not configured; skipping direct Feishu send."
+            exit 0
+          fi
+          if [ ! -f reports/feishu_summary.md ]; then
+            echo "No Feishu summary to send."
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = Path("reports/feishu_summary.md").read_text(encoding="utf-8")
+          payload = {
+              "msg_type": "text",
+              "content": {"text": summary[:15000]},
+          }
+          Path("reports/feishu_payload.json").write_text(
+              json.dumps(payload, ensure_ascii=False),
+              encoding="utf-8",
+          )
+          PY
+          curl -fsS -X POST \
+            -H "Content-Type: application/json" \
+            --data @reports/feishu_payload.json \
+            "$FEISHU_WEBHOOK_URL"
+
       - name: Upload DailyStock artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -185,6 +268,7 @@ jobs:
             reports/
             runs/**/dashboard.md
             runs/**/feishu_summary.md
+            runs/**/run_metadata.json
             runs/**/step4_valuation_candidates.csv
             runs/**/result.json
           retention-days: 7
@@ -216,6 +300,7 @@ jobs:
           cp "$TMP_REPORT_DIR/reports/feishu_summary.md" latest/feishu_summary.md
           cp "$TMP_REPORT_DIR/reports/dashboard.md" latest/dashboard.md 2>/dev/null || true
           cp "$TMP_REPORT_DIR/reports/result.json" latest/result.json 2>/dev/null || true
+          cp "$TMP_REPORT_DIR/reports/run_metadata.json" latest/run_metadata.json 2>/dev/null || true
           cp "$TMP_REPORT_DIR/reports/final_candidates.csv" latest/final_candidates.csv 2>/dev/null || true
           cp -R latest/. "history/$RUN_KEY/"
 

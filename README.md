@@ -126,10 +126,23 @@ artifact。同时，workflow 会把最近一次结果发布到 `dailystock-resul
 - `latest/dashboard.md`
 - `latest/result.json`
 - `latest/final_candidates.csv`
+- `latest/run_metadata.json`
 
-OpenClaw 触发 tag 后，只需要等待对应 GitHub Actions run 成功，再从
-`dailystock-results:latest/feishu_summary.md` 读取 Markdown 内容并贴回飞书；这样不依赖
-GitHub artifact 下载权限。
+推荐在 AWS/OpenClaw 主机上直接执行仓库脚本：
+
+```bash
+cd /path/to/DailyStock
+scripts/openclaw_trigger_actions.sh
+```
+
+脚本会拉取最新 `main`，推送一个新的 `dailystock-*` tag 触发 GitHub Actions，
+轮询 `dailystock-results` 分支，并且只有当 `latest/run_metadata.json` 中的 tag
+或 source commit 匹配本次触发时，才把 `latest/feishu_summary.md` 打印出来。OpenClaw
+把脚本 stdout 原样贴回飞书即可。
+
+如果希望 GitHub Actions 自己直接发飞书，可在仓库 Secrets 配置
+`DAILYSTOCK_FEISHU_WEBHOOK_URL` 为飞书自定义机器人 Webhook URL。未配置该 secret
+时不会发送外部消息，仍由 OpenClaw 读取脚本输出并贴回飞书。
 
 ## 安全边界
 

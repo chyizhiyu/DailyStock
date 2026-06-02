@@ -451,7 +451,12 @@ class AkShareDataProvider:
     def _fetch_hk_meta(self, as_of: date) -> pd.DataFrame:
         spot = self._load_hk_spot(as_of)
         constituents = self._load_hk_hsci_constituents(as_of, spot)
-        listing = self._load_hk_listing_info(as_of)
+        expected_listing_codes = (
+            constituents["code"].astype(str).tolist()
+            if not constituents.empty
+            else spot["code"].astype(str).tolist()
+        )
+        listing = self._load_hk_listing_info(as_of, expected_codes=expected_listing_codes)
         frame = constituents.merge(spot, on="code", how="left", suffixes=("", "_spot"))
         frame["name"] = frame["name"].combine_first(frame.get("name_spot"))
         frame = frame.merge(listing, on="code", how="left", suffixes=("", "_listing"))
@@ -699,8 +704,12 @@ class AkShareDataProvider:
         cache_path = self._cache_path("hk_spot_full", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
         if cached is not None and not cached.empty:
-            cached = _ensure_columns(cached, _a_spot_columns())
+            cached = self._normalize_hk_spot(cached)
             if _has_usable_amount(cached):
+                enriched = self._supplement_hk_spot_turnover(cached, as_of)
+                if _usable_amount_count(enriched) > _usable_amount_count(cached):
+                    self._write_cache(cache_path, enriched)
+                    return enriched
                 return cached
             logger.warning(
                 "Cached HK spot snapshot has no usable turnover; enriching from Sina snapshot."
@@ -753,6 +762,8 @@ class AkShareDataProvider:
                             fallback_exc,
                         )
                         frame = self._load_hk_metrics_snapshot(as_of)
+        if not frame.empty:
+            frame = self._supplement_hk_spot_turnover(frame, as_of)
         if not frame.empty:
             self._write_cache(cache_path, frame)
         return frame
@@ -847,6 +858,9 @@ class AkShareDataProvider:
         return _ensure_columns(frame, _a_spot_columns()).drop_duplicates("code")
 
     def _supplement_hk_spot_turnover(self, spot: pd.DataFrame, as_of: date) -> pd.DataFrame:
+        spot = self._normalize_hk_spot(spot)
+        if not _needs_turnover_supplement(spot):
+            return _ensure_columns(spot, _a_spot_columns())
         try:
             fresh = self._fetch_hk_spot_full_from_sina_direct(as_of)
         except Exception as exc:
@@ -866,7 +880,20 @@ class AkShareDataProvider:
                 continue
             fresh_column = f"{column}_fresh"
             if fresh_column in frame:
-                frame[column] = frame[column].where(frame[column].notna(), frame[fresh_column])
+                if column in {
+                    "latest_price",
+                    "amount",
+                    "pe_ttm",
+                    "pb",
+                    "total_market_cap",
+                    "free_float_market_cap",
+                }:
+                    current = _numeric(frame[column])
+                    fresh_values = _numeric(frame[fresh_column])
+                    use_fresh = (current.isna() | current.le(0)) & fresh_values.gt(0)
+                    frame.loc[use_fresh, column] = frame.loc[use_fresh, fresh_column]
+                else:
+                    frame[column] = frame[column].where(frame[column].notna(), frame[fresh_column])
         return _ensure_columns(frame, _a_spot_columns()).drop_duplicates("code")
 
     def _load_hk_metrics_snapshot(self, as_of: date) -> pd.DataFrame:
@@ -1109,7 +1136,11 @@ class AkShareDataProvider:
         )
         return frame.dropna(subset=["code"]).drop_duplicates("code")
 
-    def _load_hk_listing_info(self, as_of: date) -> pd.DataFrame:
+    def _load_hk_listing_info(
+        self,
+        as_of: date,
+        expected_codes: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
         seed = self._read_seed("hk_listing_info.csv")
         if seed is not None:
             return self._normalize_hk_listing_info(seed)
@@ -1121,11 +1152,14 @@ class AkShareDataProvider:
         cached = self._read_cache(cache_path)
         if cached is not None:
             cached = self._normalize_hk_listing_info(cached)
-            if _has_usable_listing_dates(cached):
+            if _has_usable_listing_dates(cached) and _has_listing_coverage(
+                cached,
+                expected_codes,
+            ):
                 return cached
             logger.warning(
-                "Cached HK listing snapshot has no usable listing dates; rebuilding from "
-                "Eastmoney security profile."
+                "Cached HK listing snapshot is incomplete for the current HK universe; "
+                "rebuilding from Eastmoney security profile."
             )
 
         try:
@@ -1133,13 +1167,16 @@ class AkShareDataProvider:
         except Exception as exc:
             logger.warning("Failed to fetch HK listing info from Eastmoney profile: %s", exc)
             frame = pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
-        if frame.empty or not _has_usable_listing_dates(frame):
+        if frame.empty or not _has_usable_listing_dates(frame) or not _has_listing_coverage(
+            frame,
+            expected_codes,
+        ):
             try:
                 raw = self._call("stock_ipo_hk_ths")
             except Exception as exc:
                 logger.warning("Failed to fetch HK IPO listing info fallback: %s", exc)
-                return pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
-            frame = self._normalize_hk_listing_info(raw)
+            else:
+                frame = _merge_hk_listing_info(frame, self._normalize_hk_listing_info(raw))
 
         if not frame.empty:
             self._write_cache(cache_path, frame)
@@ -2217,12 +2254,75 @@ def _has_usable_amount(frame: pd.DataFrame) -> bool:
     return bool(amount.gt(0).sum() > 0)
 
 
+def _usable_amount_count(frame: pd.DataFrame) -> int:
+    if frame.empty or "amount" not in frame:
+        return 0
+    return int(_numeric(frame["amount"]).gt(0).sum())
+
+
+def _needs_turnover_supplement(frame: pd.DataFrame) -> bool:
+    if frame.empty or "amount" not in frame:
+        return False
+    amount = _numeric(frame["amount"])
+    return bool(amount.isna().any())
+
+
 def _has_usable_listing_dates(frame: pd.DataFrame) -> bool:
     if frame.empty or "listing_date" not in frame:
         return False
     listing = pd.to_datetime(frame["listing_date"], errors="coerce")
     plausible = listing.notna() & listing.gt(pd.Timestamp("1901-01-01"))
     return bool(plausible.sum() > 0)
+
+
+def _has_listing_coverage(
+    frame: pd.DataFrame,
+    expected_codes: Sequence[str] | None,
+    *,
+    min_ratio: float = 0.8,
+) -> bool:
+    if not expected_codes:
+        return True
+    if frame.empty or "code" not in frame or "listing_date" not in frame:
+        return False
+
+    expected = {_normalize_hk_code(code) for code in expected_codes}
+    expected.discard("")
+    if not expected:
+        return True
+
+    listing = pd.to_datetime(frame["listing_date"], errors="coerce")
+    plausible = listing.notna() & listing.gt(pd.Timestamp("1901-01-01"))
+    covered = set(frame.loc[plausible, "code"].map(_normalize_hk_code)) & expected
+    ratio = len(covered) / len(expected)
+    if ratio < min_ratio:
+        logger.warning(
+            "HK listing-date coverage is %.1f%% (%s/%s), below %.0f%% threshold.",
+            ratio * 100,
+            len(covered),
+            len(expected),
+            min_ratio * 100,
+        )
+    return ratio >= min_ratio
+
+
+def _merge_hk_listing_info(primary: pd.DataFrame, fallback: pd.DataFrame) -> pd.DataFrame:
+    frames = [
+        frame
+        for frame in [
+            primary if primary is not None else pd.DataFrame(),
+            fallback if fallback is not None else pd.DataFrame(),
+        ]
+        if not frame.empty
+    ]
+    if not frames:
+        return pd.DataFrame(columns=["code", "listing_date", "industry_listing"])
+    merged = pd.concat(frames, ignore_index=True)
+    merged = _ensure_columns(merged, ["code", "listing_date", "industry_listing"])
+    merged["code"] = merged["code"].map(_normalize_hk_code)
+    merged["listing_date"] = pd.to_datetime(merged["listing_date"], errors="coerce")
+    merged = merged.sort_values("listing_date", na_position="last")
+    return merged.dropna(subset=["code"]).drop_duplicates("code", keep="first")
 
 
 def _daily_bar_proxy_threshold() -> int:

@@ -135,6 +135,34 @@ def test_akshare_provider_uses_eastmoney_hk_listing_profile(tmp_path) -> None:
     assert row["industry_listing"] == "软件服务"
 
 
+def test_akshare_provider_rebuilds_sparse_hk_listing_cache(tmp_path) -> None:
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_ExplodingAkShare(),
+        max_workers=1,
+    )
+    provider._cache_path("hk_listing_info", AS_OF.strftime("%Y%m%d")).write_text(  # noqa: SLF001
+        "code,listing_date,industry_listing\n00700,2004-06-16,软件服务\n",
+        encoding="utf-8",
+    )
+    provider._fetch_hk_listing_info_from_eastmoney = lambda: pd.DataFrame(  # noqa: SLF001
+        {
+            "code": ["00700", "00005"],
+            "listing_date": [pd.Timestamp("2004-06-16"), pd.Timestamp("1980-01-02")],
+            "industry_listing": ["软件服务", "银行"],
+        }
+    )
+
+    listing = provider._load_hk_listing_info(  # noqa: SLF001
+        AS_OF,
+        expected_codes=["00700", "00005"],
+    )
+
+    assert set(listing["code"]) == {"00700", "00005"}
+    assert listing.set_index("code").loc["00005", "listing_date"] == pd.Timestamp("1980-01-02")
+
+
 def test_akshare_provider_hk_metrics_only_fallback_when_spot_sources_fail(tmp_path) -> None:
     provider = AkShareDataProvider(
         cache_dir=tmp_path / "cache",
