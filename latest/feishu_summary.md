@@ -1,8 +1,8 @@
 # DailyStock GitHub Actions Result
 
-- Tag: `dailystock-20260602-193112`
-- Run: [#16](https://github.com/chyizhiyu/DailyStock/actions/runs/26816886998)
-- Source commit: `1405209fde97`
+- Tag: `dailystock-20260602-200735`
+- Run: [#17](https://github.com/chyizhiyu/DailyStock/actions/runs/26818660572)
+- Source commit: `b02f513c2b17`
 - Run attempt: `1`
 
 # DailyStock Weekly Screen
@@ -15,16 +15,26 @@
 
 | Step | Input | Output | Rejections | Seconds |
 | --- | ---: | ---: | --- | ---: |
-| step1_fetch_meta | 0 | 6288 | - | 265.114 |
-| step2_hard_filters | 6288 | 2661 | risk_screen: 641, listing_age: 291, liquidity: 779, market_cap: 1468, performance_floor: 448 | 0.788 |
-| step3_financial_quality | 2661 | 248 | profitability: 2202, leverage: 36, cash_flow_quality: 102, growth: 73 | 0.063 |
-| step4_valuation | 248 | 51 | missing_valuation_data: 28, pe_valuation_percentile: 102, pb_valuation_percentile: 60, dividend_yield: 7 | 0.281 |
-| step5_futu_executor | 51 | 51 | spread_too_wide: 45 | 0.009 |
+| step1_fetch_meta | 0 | 6288 | - | 875.088 |
+| step2_hard_filters | 6288 | 2599 | risk_screen: 641, listing_age: 387, liquidity: 768, market_cap: 1450, performance_floor: 443 | 0.538 |
+| step3_financial_quality | 2599 | 235 | profitability: 2156, leverage: 35, cash_flow_quality: 100, growth: 73 | 0.060 |
+| step4_valuation | 235 | 48 | missing_valuation_data: 28, pe_valuation_percentile: 92, pb_valuation_percentile: 60, dividend_yield: 7 | 0.229 |
+| step5_futu_executor | 48 | 48 | spread_too_wide: 42 | 0.007 |
+
+## Market Coverage
+
+| Step | CN Out | CN Rejected | HK Out | HK Rejected |
+| --- | ---: | ---: | ---: | ---: |
+| step1_fetch_meta | 5061 | 0 | 1227 | 0 |
+| step2_hard_filters | 2599 | 2462 | 0 | 1227 |
+| step3_financial_quality | 235 | 2364 | 0 | 0 |
+| step4_valuation | 48 | 187 | 0 | 0 |
+| step5_futu_executor | 48 | 42 | 0 | 0 |
 
 ## Step 5 Decisions
 
-- Actions: `SKIP: 45, WATCH: 6`
-- Reasons: `spread_too_wide: 45, passed_depth_scan: 6`
+- Actions: `SKIP: 42, WATCH: 6`
+- Reasons: `spread_too_wide: 42, passed_depth_scan: 6`
 
 ## WATCH / BUY Candidates
 

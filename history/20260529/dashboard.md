@@ -8,11 +8,21 @@
 
 | Step | Input | Output | Rejections | Seconds |
 | --- | ---: | ---: | --- | ---: |
-| step1_fetch_meta | 0 | 6288 | - | 265.114 |
-| step2_hard_filters | 6288 | 2661 | risk_screen: 641, listing_age: 291, liquidity: 779, market_cap: 1468, performance_floor: 448 | 0.788 |
-| step3_financial_quality | 2661 | 248 | profitability: 2202, leverage: 36, cash_flow_quality: 102, growth: 73 | 0.063 |
-| step4_valuation | 248 | 51 | missing_valuation_data: 28, pe_valuation_percentile: 102, pb_valuation_percentile: 60, dividend_yield: 7 | 0.281 |
-| step5_futu_executor | 51 | 51 | spread_too_wide: 45 | 0.009 |
+| step1_fetch_meta | 0 | 6288 | - | 875.088 |
+| step2_hard_filters | 6288 | 2599 | risk_screen: 641, listing_age: 387, liquidity: 768, market_cap: 1450, performance_floor: 443 | 0.538 |
+| step3_financial_quality | 2599 | 235 | profitability: 2156, leverage: 35, cash_flow_quality: 100, growth: 73 | 0.060 |
+| step4_valuation | 235 | 48 | missing_valuation_data: 28, pe_valuation_percentile: 92, pb_valuation_percentile: 60, dividend_yield: 7 | 0.229 |
+| step5_futu_executor | 48 | 48 | spread_too_wide: 42 | 0.007 |
+
+## Market Coverage
+
+| Step | CN Out | CN Rejected | HK Out | HK Rejected |
+| --- | ---: | ---: | ---: | ---: |
+| step1_fetch_meta | 5061 | 0 | 1227 | 0 |
+| step2_hard_filters | 2599 | 2462 | 0 | 1227 |
+| step3_financial_quality | 235 | 2364 | 0 | 0 |
+| step4_valuation | 48 | 187 | 0 | 0 |
+| step5_futu_executor | 48 | 42 | 0 | 0 |
 
 ## Final Candidates
 
@@ -56,15 +66,12 @@
 | 600933 | 爱柯迪 | CN | SW_UNKNOWN | 0.1321 | 13.23 | 0.3146 | 1.635 | 0.2831 | 0.02562 | 0.1259 |
 | 600938 | 中国海油 | CN | SW_UNKNOWN | 0.1564 | 13.69 | 0.3239 | 1.997 | 0.3703 | 0.01412 | 0.125 |
 | 600993 | 马应龙 | CN | SW_UNKNOWN | 0.1377 | 18.02 | 0.3939 | 2.283 | 0.4416 | 0.02878 | 0.05728 |
-| 601083 | 锦江航运 | CN | SW_UNKNOWN | 0.1663 | 9.922 | 0.2683 | 1.538 | 0.2521 | 0.05317 | 0.1667 |
 | 601088 | 中国神华 | CN | SW_UNKNOWN | 0.1276 | 18.14 | 0.3953 | 2.176 | 0.4194 | 0.02135 | 0.07174 |
 | 601567 | 三星电气 | CN | SW_UNKNOWN | 0.1059 | 17.96 | 0.393 | 1.942 | 0.3596 | 0.02021 | 0.07801 |
 | 601811 | 新华文轩 | CN | SW_UNKNOWN | 0.1048 | 10.3 | 0.2711 | 1.037 | 0.1066 | 0.03211 | 0.09347 |
 | 601900 | 南方传媒 | CN | SW_UNKNOWN | 0.1219 | 10.26 | 0.2706 | 1.169 | 0.1381 | 0.04624 | 0.1606 |
 | 601965 | 中国汽研 | CN | SW_UNKNOWN | 0.1431 | 15.02 | 0.3489 | 1.995 | 0.3698 | 0.01508 | 0.07685 |
 | 603181 | 皇马科技 | CN | SW_UNKNOWN | 0.1332 | 18.12 | 0.3948 | 2.243 | 0.431 | 0.0166 | 0.05564 |
-| 603202 | 天有为 | CN | SW_UNKNOWN | 0.1623 | 10.48 | 0.2729 | 1.534 | 0.2488 | 0.02276 | 0.1012 |
-| 603391 | 力聚热能 | CN | SW_UNKNOWN | 0.1037 | 23.88 | 0.4759 | 2.375 | 0.4597 | 0.02329 | 0.06421 |
 | 603568 | 伟明环保 | CN | SW_UNKNOWN | 0.1572 | 11.41 | 0.285 | 2.002 | 0.3716 | 0.03102 | 0.105 |
 | 603658 | 安图生物 | CN | SW_UNKNOWN | 0.1225 | 17.01 | 0.3777 | 1.984 | 0.3675 | 0.03205 | 0.07381 |
 | 603816 | 顾家家居 | CN | SW_UNKNOWN | 0.1768 | 13.36 | 0.3188 | 2.178 | 0.4198 | 0.04695 | 0.1149 |
@@ -112,16 +119,13 @@
 | 600933 | SKIP | spread_too_wide | 1.596 | 1.62 | 150 | normal | True | 0 | 0 | OK |  | True |
 | 600938 | SKIP | spread_too_wide | 165.9 | 168.5 | 154 | normal | True | 0 | 0 | OK |  | True |
 | 600993 | SKIP | spread_too_wide | 1.04 | 1.057 | 158 | normal | True | 0 | 0 | OK |  | True |
-| 601083 | SKIP | spread_too_wide | 1.477 | 1.502 | 162 | normal | True | 0 | 0 | OK |  | True |
-| 601088 | SKIP | spread_too_wide | 103.8 | 105.5 | 166 | normal | True | 0 | 0 | OK |  | True |
-| 601567 | SKIP | spread_too_wide | 2.252 | 2.29 | 170 | normal | True | 0 | 0 | OK |  | True |
-| 601811 | SKIP | spread_too_wide | 1.6 | 1.628 | 174 | normal | True | 0 | 0 | OK |  | True |
-| 601900 | SKIP | spread_too_wide | 1.059 | 1.078 | 178 | normal | True | 0 | 0 | OK |  | True |
-| 601965 | SKIP | spread_too_wide | 1.582 | 1.611 | 182 | normal | True | 0 | 0 | OK |  | True |
-| 603181 | SKIP | spread_too_wide | 0.991 | 1.009 | 186 | normal | True | 0 | 0 | OK |  | True |
-| 603202 | SKIP | spread_too_wide | 1.045 | 1.065 | 190 | normal | True | 0 | 0 | OK |  | True |
-| 603391 | SKIP | spread_too_wide | 0.99 | 1.01 | 194 | normal | True | 0 | 0 | OK |  | True |
-| 603568 | SKIP | spread_too_wide | 3.038 | 3.098 | 198 | normal | True | 0 | 0 | OK |  | True |
-| 603658 | SKIP | spread_too_wide | 1.799 | 1.836 | 202 | normal | True | 0 | 0 | OK |  | True |
-| 603816 | SKIP | spread_too_wide | 2.389 | 2.439 | 206 | normal | True | 0 | 0 | OK |  | True |
-| 605338 | SKIP | spread_too_wide | 0.99 | 1.01 | 210 | normal | True | 0 | 0 | OK |  | True |
+| 601088 | SKIP | spread_too_wide | 103.8 | 105.5 | 162 | normal | True | 0 | 0 | OK |  | True |
+| 601567 | SKIP | spread_too_wide | 2.252 | 2.29 | 166 | normal | True | 0 | 0 | OK |  | True |
+| 601811 | SKIP | spread_too_wide | 1.6 | 1.628 | 170 | normal | True | 0 | 0 | OK |  | True |
+| 601900 | SKIP | spread_too_wide | 1.059 | 1.077 | 174 | normal | True | 0 | 0 | OK |  | True |
+| 601965 | SKIP | spread_too_wide | 1.583 | 1.611 | 178 | normal | True | 0 | 0 | OK |  | True |
+| 603181 | SKIP | spread_too_wide | 0.991 | 1.009 | 182 | normal | True | 0 | 0 | OK |  | True |
+| 603568 | SKIP | spread_too_wide | 3.039 | 3.097 | 186 | normal | True | 0 | 0 | OK |  | True |
+| 603658 | SKIP | spread_too_wide | 1.8 | 1.835 | 190 | normal | True | 0 | 0 | OK |  | True |
+| 603816 | SKIP | spread_too_wide | 2.391 | 2.438 | 194 | normal | True | 0 | 0 | OK |  | True |
+| 605338 | SKIP | spread_too_wide | 0.99 | 1.01 | 198 | normal | True | 0 | 0 | OK |  | True |
