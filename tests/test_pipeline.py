@@ -23,12 +23,19 @@ def test_pipeline_runs_full_sample_funnel(tmp_path) -> None:
         ("step4_valuation", 3, 2),
         ("step5_futu_executor", 2, 2),
     ]
+    step2 = next(step for step in result.steps if step.name == "step2_hard_filters")
+    assert step2.rejected_market_counts == {"CN": 5, "HK": 2}
+    assert step2.rejection_market_counts["risk_screen"] == {"CN": 1, "HK": 2}
     assert result.execution_plan
     assert all(plan["dry_run"] for plan in result.execution_plan)
     assert all(plan["risk_status"] == "OK" for plan in result.execution_plan)
     assert any(path.endswith("dashboard.md") for path in result.artifacts)
     assert any(path.endswith("feishu_summary.md") for path in result.artifacts)
     assert any(path.endswith("result.json") for path in result.artifacts)
+    dashboard_path = next(path for path in result.artifacts if path.endswith("dashboard.md"))
+    dashboard = open(dashboard_path, encoding="utf-8").read()
+    assert "## Rejection Breakdown By Market" in dashboard
+    assert "| step2_hard_filters | risk_screen | 1 | 2 |" in dashboard
 
 
 def test_pipeline_uses_strictest_dry_run_setting(tmp_path) -> None:

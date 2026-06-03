@@ -40,11 +40,7 @@ def run_hard_filters(
             ("risk_screen", _risk_screen),
             ("listing_age", lambda frame: frame["listing_date"] <= cutoff),
             ("liquidity", lambda frame: _turnover_ok(frame, settings)),
-            (
-                "market_cap",
-                lambda frame: pd.to_numeric(frame["total_market_cap"], errors="coerce")
-                >= settings.min_total_market_cap,
-            ),
+            ("market_cap", lambda frame: _market_cap_ok(frame, settings)),
             ("missing_financials", lambda frame: frame["has_financial_history"].astype(bool)),
             (
                 "performance_floor",
@@ -76,11 +72,7 @@ def run_non_financial_hard_filters(
             ("risk_screen", _risk_screen),
             ("listing_age", lambda frame: frame["listing_date"] <= cutoff),
             ("liquidity", lambda frame: _turnover_ok(frame, settings)),
-            (
-                "market_cap",
-                lambda frame: pd.to_numeric(frame["total_market_cap"], errors="coerce")
-                >= settings.min_total_market_cap,
-            ),
+            ("market_cap", lambda frame: _market_cap_ok(frame, settings)),
         ],
     )
 
@@ -146,10 +138,22 @@ def _risk_screen(frame: pd.DataFrame) -> pd.Series:
 
 
 def _turnover_ok(frame: pd.DataFrame, settings: HardFilterSettings) -> pd.Series:
-    thresholds = frame["market"].map(settings.min_avg_turnover).fillna(float("inf"))
+    thresholds = _market_thresholds(frame, settings.min_avg_turnover)
     turnover = pd.to_numeric(frame["avg_turnover_20d"], errors="coerce")
     trade_days = pd.to_numeric(frame["effective_trade_days_30d"], errors="coerce").fillna(0)
     return (trade_days >= 20) & (turnover >= thresholds)
+
+
+def _market_cap_ok(frame: pd.DataFrame, settings: HardFilterSettings) -> pd.Series:
+    thresholds = _market_thresholds(frame, settings.min_total_market_cap)
+    market_cap = pd.to_numeric(frame["total_market_cap"], errors="coerce")
+    return market_cap >= thresholds
+
+
+def _market_thresholds(frame: pd.DataFrame, thresholds: dict[str, float]) -> pd.Series:
+    normalized = {str(market).upper(): float(value) for market, value in thresholds.items()}
+    markets = frame["market"].fillna("UNKNOWN").astype(str).str.upper()
+    return markets.map(normalized).fillna(float("inf"))
 
 
 def _hk_restricted_suffix(frame: pd.DataFrame) -> pd.Series:

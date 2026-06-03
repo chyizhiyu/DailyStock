@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,9 +22,21 @@ class HardFilterSettings(BaseModel):
     min_avg_turnover: dict[str, float] = Field(
         default_factory=lambda: {"CN": 30_000_000, "HK": 30_000_000}
     )
-    min_total_market_cap: float = 5_000_000_000
+    min_total_market_cap: dict[str, float] = Field(
+        default_factory=lambda: {"CN": 5_000_000_000, "HK": 5_000_000_000}
+    )
     consecutive_loss_years: int = 2
     negative_ocf_years: int = 3
+
+    @field_validator("min_avg_turnover", "min_total_market_cap", mode="before")
+    @classmethod
+    def _normalize_market_thresholds(cls, value: object) -> dict[str, float] | object:
+        if isinstance(value, int | float):
+            threshold = float(value)
+            return {"CN": threshold, "HK": threshold}
+        if isinstance(value, dict):
+            return {str(market).upper(): float(threshold) for market, threshold in value.items()}
+        return value
 
 
 class QualityFilterSettings(BaseModel):

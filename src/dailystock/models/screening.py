@@ -24,6 +24,7 @@ class StepSummary(BaseModel):
     rejection_counts: dict[str, int] = Field(default_factory=dict)
     output_market_counts: dict[str, int] = Field(default_factory=dict)
     rejected_market_counts: dict[str, int] = Field(default_factory=dict)
+    rejection_market_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
     artifacts: list[str] = Field(default_factory=list)
 
 

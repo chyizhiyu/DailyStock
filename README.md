@@ -80,7 +80,7 @@ curl -X POST http://127.0.0.1:8000/webhook/openclaw \
 
 主要阈值位于 `config/default.yaml`：
 
-- `hard_filters`: 上市年限、20 日均成交额、市值、连续亏损、经营现金流底线。
+- `hard_filters`: 上市年限、20 日均成交额、市值、连续亏损、经营现金流底线；流动性和市值阈值支持按 `CN`/`HK` 分市场配置。
 - `quality_filters`: ROE、毛利率、净利率、资产负债率、现金流含金量、5 年 CAGR。
 - `valuation_filters`: 行业历史 PE/PB 分位、FCF Yield。
 - `futu`: OpenD host/port、交易环境、dry-run、live-trading 总开关、单笔订单金额上限、单只持仓比例上限。

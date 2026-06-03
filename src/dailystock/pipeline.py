@@ -271,6 +271,7 @@ class DailyStockPipeline:
             rejection_counts=result.rejection_counts,
             output_market_counts=_market_counts(result.candidates),
             rejected_market_counts=_market_counts(result.rejected),
+            rejection_market_counts=_reason_market_counts(result.rejected, "rejection_reason"),
         )
         return result, summary
 
@@ -294,6 +295,7 @@ class DailyStockPipeline:
             else {},
             output_market_counts=_market_counts(result.execution_plan),
             rejected_market_counts=_market_counts(skipped),
+            rejection_market_counts=_reason_market_counts(skipped, "decision_reason"),
         )
         return result, summary
 
@@ -375,7 +377,8 @@ def _log_step_summary(label: str, summary: StepSummary) -> None:
     reclaimed = max(summary.input_count - summary.output_count, 0)
     logger.info(
         "[%s] Input: %s stocks, Output: %s stocks, Reclaimed: %s stocks, "
-        "Time elapsed: %.3f s, Rejections: %s, Output markets: %s, Rejected markets: %s",
+        "Time elapsed: %.3f s, Rejections: %s, Output markets: %s, Rejected markets: %s, "
+        "Rejections by market: %s",
         label,
         summary.input_count,
         summary.output_count,
@@ -384,6 +387,7 @@ def _log_step_summary(label: str, summary: StepSummary) -> None:
         summary.rejection_counts or {},
         summary.output_market_counts or {},
         summary.rejected_market_counts or {},
+        summary.rejection_market_counts or {},
     )
 
 
@@ -394,3 +398,20 @@ def _market_counts(frame: pd.DataFrame) -> dict[str, int]:
         str(market): int(count)
         for market, count in frame["market"].fillna("UNKNOWN").value_counts().items()
     }
+
+
+def _reason_market_counts(frame: pd.DataFrame, reason_column: str) -> dict[str, dict[str, int]]:
+    if frame.empty or reason_column not in frame or "market" not in frame:
+        return {}
+    grouped = (
+        frame.assign(
+            _reason=frame[reason_column].fillna("UNKNOWN").astype(str),
+            _market=frame["market"].fillna("UNKNOWN").astype(str).str.upper(),
+        )
+        .groupby(["_reason", "_market"], dropna=False)
+        .size()
+    )
+    breakdown: dict[str, dict[str, int]] = {}
+    for (reason, market), count in grouped.items():
+        breakdown.setdefault(str(reason), {})[str(market)] = int(count)
+    return breakdown

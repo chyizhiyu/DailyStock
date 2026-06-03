@@ -76,6 +76,35 @@ def test_hard_filters_reject_liquidity_when_effective_days_under_20() -> None:
     assert result.rejection_counts == {"liquidity": 1}
 
 
+def test_hard_filters_use_market_specific_market_cap_thresholds() -> None:
+    settings, _ = _settings_and_provider()
+    settings.hard_filters.min_total_market_cap = {"CN": 5_000_000_000, "HK": 2_000_000_000}
+    cn_meta = _minimal_meta(code="CN123456", name="CN Small Cap", market="CN")
+    hk_meta = _minimal_meta(code="HK12345", name="HK Mid Cap", market="HK")
+    cn_meta["total_market_cap"] = 3_000_000_000
+    hk_meta["total_market_cap"] = 3_000_000_000
+    meta = pd.concat([cn_meta, hk_meta], ignore_index=True)
+    daily_bars = pd.concat(
+        [
+            _daily_bars("CN123456", days=20, amount=60_000_000),
+            _daily_bars("HK12345", days=20, amount=60_000_000),
+        ],
+        ignore_index=True,
+    )
+    financials = pd.concat(
+        [_hard_financials("CN123456"), _hard_financials("HK12345")],
+        ignore_index=True,
+    )
+
+    result = run_hard_filters(meta, daily_bars, financials, AS_OF, settings.hard_filters)
+
+    assert result.candidates["code"].tolist() == ["HK12345"]
+    assert result.rejection_counts == {"market_cap": 1}
+    assert result.rejected[["code", "market", "rejection_reason"]].to_dict("records") == [
+        {"code": "CN123456", "market": "CN", "rejection_reason": "market_cap"}
+    ]
+
+
 def test_financial_quality_keeps_profitable_cash_generators() -> None:
     settings, provider = _settings_and_provider()
     hard = _hard_result(settings, provider)

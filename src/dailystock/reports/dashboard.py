@@ -35,6 +35,11 @@ def build_dashboard(
     lines.extend(["", "## Market Coverage", ""])
     lines.append(_market_coverage_table(steps, request.markets))
 
+    rejection_breakdown = _rejection_breakdown_table(steps, request.markets)
+    if rejection_breakdown:
+        lines.extend(["", "## Rejection Breakdown By Market", ""])
+        lines.append(rejection_breakdown)
+
     lines.extend(["", "## Final Candidates", ""])
     if candidates.empty:
         lines.append("_No candidates survived the valuation funnel._")
@@ -121,4 +126,28 @@ def _market_coverage_table(steps: list[StepSummary], markets: list[str]) -> str:
             row.append(str(step.output_market_counts.get(str(market), 0)))
             row.append(str(step.rejected_market_counts.get(str(market), 0)))
         lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _rejection_breakdown_table(steps: list[StepSummary], markets: list[str]) -> str:
+    rows: list[list[str]] = []
+    for step in steps:
+        reasons = step.rejection_counts.keys() or step.rejection_market_counts.keys()
+        for reason in reasons:
+            market_counts = step.rejection_market_counts.get(str(reason), {})
+            if not market_counts:
+                continue
+            rows.append(
+                [step.name, str(reason)]
+                + [str(market_counts.get(str(market), 0)) for market in markets]
+            )
+    if not rows:
+        return ""
+
+    headers = ["Step", "Reason", *[str(market) for market in markets]]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---", "---"] + ["---:"] * len(markets)) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows)
     return "\n".join(lines)

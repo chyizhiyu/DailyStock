@@ -48,6 +48,11 @@ def build_feishu_summary(
     lines.extend(["", "## Market Coverage", ""])
     lines.append(_market_coverage_table(steps, request.markets))
 
+    rejection_breakdown = _rejection_breakdown_table(steps, request.markets)
+    if rejection_breakdown:
+        lines.extend(["", "## Rejection Breakdown By Market", ""])
+        lines.append(rejection_breakdown)
+
     lines.extend(["", "## Step 5 Decisions", ""])
     if execution_plan.empty or "action" not in execution_plan:
         lines.append("_No execution plan was produced._")
@@ -158,4 +163,28 @@ def _market_coverage_table(steps: Sequence[StepSummary], markets: Sequence[str])
             row.append(str(step.output_market_counts.get(str(market), 0)))
             row.append(str(step.rejected_market_counts.get(str(market), 0)))
         lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _rejection_breakdown_table(steps: Sequence[StepSummary], markets: Sequence[str]) -> str:
+    rows: list[list[str]] = []
+    for step in steps:
+        reasons = step.rejection_counts.keys() or step.rejection_market_counts.keys()
+        for reason in reasons:
+            market_counts = step.rejection_market_counts.get(str(reason), {})
+            if not market_counts:
+                continue
+            rows.append(
+                [step.name, str(reason)]
+                + [str(market_counts.get(str(market), 0)) for market in markets]
+            )
+    if not rows:
+        return ""
+
+    headers = ["Step", "Reason", *[str(market) for market in markets]]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---", "---"] + ["---:"] * len(markets)) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in rows)
     return "\n".join(lines)
