@@ -30,6 +30,8 @@ CN_BULK_FINANCIAL_LOOKBACK_YEARS = 6
 CN_PER_STOCK_FINANCIAL_FALLBACK_LIMIT = 80
 HK_PER_STOCK_FINANCIAL_FALLBACK_LIMIT = 250
 DAILY_BAR_PROXY_THRESHOLD = 300
+HK_SPOT_MIN_PRICE_COVERAGE = 0.50
+HK_SPOT_MIN_AMOUNT_COVERAGE = 0.05
 EMPTY_FINANCIAL_COLUMNS = [
     "code",
     "fiscal_year",
@@ -724,70 +726,74 @@ class AkShareDataProvider:
 
         cache_path = self._cache_path("hk_spot_full", as_of.strftime("%Y%m%d"))
         cached = self._read_cache(cache_path)
+        cached_fallback = pd.DataFrame(columns=_a_spot_columns())
         if cached is not None and not cached.empty:
             cached = self._normalize_hk_spot(cached)
-            if _has_usable_amount(cached):
-                enriched = self._supplement_hk_spot_turnover(cached, as_of)
+            enriched = self._supplement_hk_spot_turnover(cached, as_of)
+            cached_fallback = enriched
+            if _is_usable_hk_spot_snapshot(enriched):
                 if _usable_amount_count(enriched) > _usable_amount_count(cached):
                     self._write_cache(cache_path, enriched)
-                    return enriched
-                return cached
-            logger.warning(
-                "Cached HK spot snapshot has no usable turnover; enriching from Sina snapshot."
-            )
-            enriched = self._supplement_hk_spot_turnover(cached, as_of)
-            if _has_usable_amount(enriched):
-                self._write_cache(cache_path, enriched)
                 return enriched
-            return cached
+            logger.warning(
+                "Cached HK spot snapshot quality is weak (%s); rebuilding from all HK sources.",
+                _format_hk_spot_quality(enriched),
+            )
         if cached is not None and cached.empty:
             logger.warning(
                 "Ignoring empty HK spot cache at %s and retrying data sources.",
                 cache_path,
             )
 
-        try:
-            frame = self._fetch_hk_spot_full_from_eastmoney()
-            if frame.empty:
-                raise ValueError("Eastmoney HK spot snapshot returned no rows")
-        except Exception as exc:
+        frame = self._build_hk_spot_snapshot(as_of)
+        if frame.empty and not cached_fallback.empty:
             logger.warning(
-                "Full HK spot snapshot failed, falling back to direct Sina HK spot: %s",
-                exc,
+                "All HK spot sources failed; using weak cached snapshot (%s).",
+                _format_hk_spot_quality(cached_fallback),
             )
-            try:
-                frame = self._fetch_hk_spot_full_from_sina_direct(as_of)
-                if frame.empty or not _has_usable_amount(frame):
-                    raise ValueError("Sina HK spot snapshot returned no usable turnover")
-            except Exception as direct_sina_exc:
-                logger.warning(
-                    "Direct Sina HK spot failed, trying AkShare Sina wrapper: %s",
-                    direct_sina_exc,
-                )
-                try:
-                    frame = self._fetch_hk_spot_full_from_sina(as_of)
-                    if frame.empty or not _has_usable_amount(frame):
-                        raise ValueError("AkShare Sina HK spot returned no usable turnover")
-                except Exception as sina_exc:
-                    logger.warning(
-                        "Sina HK spot snapshot failed, trying AkShare EM fallback: %s",
-                        sina_exc,
-                    )
-                    try:
-                        raw = self._call("stock_hk_spot_em")
-                        frame = self._normalize_hk_spot(raw)
-                    except Exception as fallback_exc:
-                        logger.warning(
-                            "Failed to fetch HK spot snapshot: %s; falling back to "
-                            "HK metrics-only universe.",
-                            fallback_exc,
-                        )
-                        frame = self._load_hk_metrics_snapshot(as_of)
+            return cached_fallback
         if not frame.empty:
             frame = self._supplement_hk_spot_turnover(frame, as_of)
+            if not _is_usable_hk_spot_snapshot(frame):
+                logger.warning(
+                    "HK spot snapshot remains weak after multi-source merge: %s.",
+                    _format_hk_spot_quality(frame),
+                )
         if not frame.empty:
             self._write_cache(cache_path, frame)
         return frame
+
+    def _build_hk_spot_snapshot(self, as_of: date) -> pd.DataFrame:
+        sources: list[tuple[str, Callable[[], pd.DataFrame]]] = [
+            ("eastmoney_push2", self._fetch_hk_spot_full_from_eastmoney),
+            ("sina_direct", lambda: self._fetch_hk_spot_full_from_sina_direct(as_of)),
+            ("akshare_sina", lambda: self._fetch_hk_spot_full_from_sina(as_of)),
+            ("akshare_em", lambda: self._normalize_hk_spot(self._call("stock_hk_spot_em"))),
+            ("eastmoney_metrics", lambda: self._load_hk_metrics_snapshot(as_of)),
+        ]
+        frames: list[pd.DataFrame] = []
+        for name, loader in sources:
+            try:
+                frame = self._normalize_hk_spot(loader())
+            except Exception as exc:
+                logger.warning("HK spot source %s failed: %s", name, exc)
+                continue
+            if frame.empty:
+                logger.warning("HK spot source %s returned no rows.", name)
+                continue
+            logger.info(
+                "HK spot source %s quality: %s.",
+                name,
+                _format_hk_spot_quality(frame),
+            )
+            frames.append(frame)
+
+        merged = _merge_hk_spot_frames(frames)
+        if merged.empty:
+            logger.warning("Failed to build HK spot snapshot from all sources.")
+        else:
+            logger.info("Merged HK spot quality: %s.", _format_hk_spot_quality(merged))
+        return merged
 
     def _normalize_hk_spot(self, raw: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(
@@ -912,7 +918,7 @@ class AkShareDataProvider:
                     current = _numeric(frame[column])
                     fresh_values = _numeric(frame[fresh_column])
                     use_fresh = (current.isna() | current.le(0)) & fresh_values.gt(0)
-                    frame.loc[use_fresh, column] = frame.loc[use_fresh, fresh_column]
+                    frame.loc[use_fresh, column] = fresh_values.loc[use_fresh]
                 else:
                     frame[column] = frame[column].where(frame[column].notna(), frame[fresh_column])
         return _ensure_columns(frame, _a_spot_columns()).drop_duplicates("code")
@@ -2255,6 +2261,106 @@ def _a_spot_columns() -> list[str]:
     ]
 
 
+def _merge_hk_spot_frames(frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
+    normalized = [
+        _ensure_columns(frame, _a_spot_columns()).dropna(subset=["code"])
+        for frame in frames
+        if frame is not None and not frame.empty
+    ]
+    if not normalized:
+        return pd.DataFrame(columns=_a_spot_columns())
+
+    merged = normalized[0].copy()
+    numeric_columns = {
+        "latest_price",
+        "amount",
+        "pe_ttm",
+        "pb",
+        "total_market_cap",
+        "free_float_market_cap",
+    }
+    for frame in normalized[1:]:
+        merged = merged.merge(
+            frame,
+            on="code",
+            how="outer",
+            suffixes=("", "_source"),
+        )
+        for column in _a_spot_columns():
+            if column == "code":
+                continue
+            source_column = f"{column}_source"
+            if source_column not in merged:
+                continue
+            if column in numeric_columns:
+                current = _numeric(merged[column])
+                source = _numeric(merged[source_column])
+                use_source = (current.isna() | current.le(0)) & source.gt(0)
+                merged.loc[use_source, column] = source.loc[use_source]
+            else:
+                current = merged[column]
+                source = merged[source_column]
+                current_text = current.fillna("").astype(str).str.strip()
+                use_source = current.isna() | current_text.eq("")
+                merged.loc[use_source, column] = source.loc[use_source]
+            merged = merged.drop(columns=[source_column])
+
+    return _ensure_columns(merged, _a_spot_columns()).dropna(subset=["code"]).drop_duplicates(
+        "code"
+    )
+
+
+def _hk_spot_quality(frame: pd.DataFrame) -> dict[str, int | float]:
+    if frame.empty:
+        return _empty_hk_spot_quality()
+    normalized = _ensure_columns(frame, _a_spot_columns()).dropna(subset=["code"])
+    rows = len(normalized)
+    if rows == 0:
+        return _empty_hk_spot_quality()
+    price_count = int(_numeric(normalized["latest_price"]).gt(0).sum())
+    amount_count = int(_numeric(normalized["amount"]).gt(0).sum())
+    return {
+        "rows": rows,
+        "price_count": price_count,
+        "amount_count": amount_count,
+        "price_ratio": price_count / rows,
+        "amount_ratio": amount_count / rows,
+    }
+
+
+def _empty_hk_spot_quality() -> dict[str, int | float]:
+    return {
+        "rows": 0,
+        "price_count": 0,
+        "amount_count": 0,
+        "price_ratio": 0.0,
+        "amount_ratio": 0.0,
+    }
+
+
+def _is_usable_hk_spot_snapshot(frame: pd.DataFrame) -> bool:
+    quality = _hk_spot_quality(frame)
+    rows = int(quality["rows"])
+    if rows == 0:
+        return False
+    return (
+        float(quality["price_ratio"]) >= _hk_spot_min_price_coverage()
+        and float(quality["amount_ratio"]) >= _hk_spot_min_amount_coverage()
+    )
+
+
+def _format_hk_spot_quality(frame: pd.DataFrame) -> str:
+    quality = _hk_spot_quality(frame)
+    rows = int(quality["rows"])
+    price_count = int(quality["price_count"])
+    amount_count = int(quality["amount_count"])
+    return (
+        f"rows={rows}, price={price_count}/{rows} "
+        f"({float(quality['price_ratio']):.1%}), amount={amount_count}/{rows} "
+        f"({float(quality['amount_ratio']):.1%})"
+    )
+
+
 def _unknown_industry(market: str) -> str:
     return "SW_UNKNOWN" if str(market).upper() == "CN" else "HS_UNKNOWN"
 
@@ -2422,6 +2528,31 @@ def _daily_bar_proxy_threshold() -> int:
             DAILY_BAR_PROXY_THRESHOLD,
         )
         return DAILY_BAR_PROXY_THRESHOLD
+
+
+def _hk_spot_min_price_coverage() -> float:
+    return _env_float(
+        "DAILYSTOCK_AKSHARE_HK_SPOT_MIN_PRICE_COVERAGE",
+        HK_SPOT_MIN_PRICE_COVERAGE,
+    )
+
+
+def _hk_spot_min_amount_coverage() -> float:
+    return _env_float(
+        "DAILYSTOCK_AKSHARE_HK_SPOT_MIN_AMOUNT_COVERAGE",
+        HK_SPOT_MIN_AMOUNT_COVERAGE,
+    )
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %.2f.", name, raw, default)
+        return default
 
 
 def _per_stock_financial_fallback_limit() -> int:

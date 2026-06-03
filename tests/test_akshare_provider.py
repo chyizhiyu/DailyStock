@@ -119,6 +119,58 @@ def test_akshare_provider_enriches_cached_hk_turnover(tmp_path) -> None:
     assert spot.set_index("code").loc["00700", "amount"] == 1_533_000_000
 
 
+def test_akshare_provider_merges_partial_hk_spot_sources(tmp_path) -> None:
+    provider = AkShareDataProvider(
+        cache_dir=tmp_path / "cache",
+        seed_dir=tmp_path / "seed",
+        ak_module=_ExplodingAkShare(),
+        max_workers=1,
+    )
+    provider._fetch_hk_spot_full_from_eastmoney = lambda: pd.DataFrame(  # noqa: SLF001
+        {
+            "code": ["00005"],
+            "name_spot": ["汇丰控股"],
+            "latest_price": [68.0],
+            "amount": [pd.NA],
+            "pe_ttm": [8.0],
+            "pb": [1.0],
+            "total_market_cap": [1_300_000_000_000],
+            "free_float_market_cap": [1_200_000_000_000],
+        }
+    )
+    provider._fetch_hk_spot_full_from_sina_direct = lambda as_of: pd.DataFrame(  # noqa: ARG005, SLF001
+        {
+            "code": ["00700"],
+            "name_spot": ["腾讯控股"],
+            "latest_price": [427.2],
+            "amount": [1_533_000_000],
+            "pe_ttm": [pd.NA],
+            "pb": [pd.NA],
+            "total_market_cap": [pd.NA],
+            "free_float_market_cap": [pd.NA],
+        }
+    )
+    provider._load_hk_metrics_snapshot = lambda as_of: pd.DataFrame(  # noqa: ARG005, SLF001
+        {
+            "code": ["00005", "00700"],
+            "name_spot": ["汇丰控股", "腾讯控股"],
+            "latest_price": [68.0, 427.2],
+            "amount": [pd.NA, pd.NA],
+            "pe_ttm": [8.0, 14.8],
+            "pb": [1.0, 3.05],
+            "total_market_cap": [1_300_000_000_000, 3_895_000_000_000],
+            "free_float_market_cap": [1_200_000_000_000, 3_895_000_000_000],
+        }
+    )
+
+    spot = provider._load_hk_spot(AS_OF)  # noqa: SLF001
+
+    indexed = spot.set_index("code")
+    assert set(indexed.index) == {"00005", "00700"}
+    assert indexed.loc["00700", "amount"] == 1_533_000_000
+    assert indexed.loc["00700", "total_market_cap"] == 3_895_000_000_000
+
+
 def test_akshare_provider_uses_eastmoney_hk_listing_profile(tmp_path) -> None:
     provider = AkShareDataProvider(
         cache_dir=tmp_path / "cache",
