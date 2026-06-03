@@ -491,11 +491,10 @@ class AkShareDataProvider:
         frame["listing_date"] = frame["listing_date"].fillna("1900-01-01")
         name = _hk_suffix_text(frame["name"])
         code = _hk_suffix_text(frame["code"])
+        latest_price = _numeric(frame.get("latest_price"))
         frame["is_st"] = False
-        frame["is_suspended"] = _numeric(frame.get("latest_price")).isna() | _numeric(
-            frame.get("amount")
-        ).le(0)
-        frame["is_penny_stock"] = _numeric(frame.get("latest_price")).lt(1)
+        frame["is_suspended"] = latest_price.isna() | latest_price.le(0)
+        frame["is_penny_stock"] = latest_price.lt(1).fillna(False)
         frame["is_biotech_w"] = (
             code.str.contains(r"(?:^|[-_.])W$", regex=True)
             | name.str.contains(r"(?:^|[\s\-_.(\[])(?:W|SS)(?:[\s\-_.),\]]|$)", regex=True)
