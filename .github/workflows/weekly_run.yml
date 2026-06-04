@@ -1,6 +1,10 @@
 name: Weekly DailyStock Run
 
-on:
+"on":
+  schedule:
+    # Every Friday at 16:30 Asia/Shanghai, after CN/HK close.
+    # GitHub Actions cron uses UTC, so this is 08:30 UTC.
+    - cron: "30 8 * * 5"
   workflow_dispatch:
     inputs:
       as_of:

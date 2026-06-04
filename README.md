@@ -140,9 +140,11 @@ scripts/openclaw_trigger_actions.sh
 或 source commit 匹配本次触发时，才把 `latest/feishu_summary.md` 打印出来。OpenClaw
 把脚本 stdout 原样贴回飞书即可。
 
-如果希望 GitHub Actions 自己直接发飞书，可在仓库 Secrets 配置
+GitHub Actions 已配置每周五北京时间 16:30 自动执行。若希望定时任务跑完后由
+GitHub Actions 自己直接发飞书，需要在仓库 Secrets 配置
 `DAILYSTOCK_FEISHU_WEBHOOK_URL` 为飞书自定义机器人 Webhook URL。未配置该 secret
-时不会发送外部消息，仍由 OpenClaw 读取脚本输出并贴回飞书。
+时不会发送外部消息，仍会打印 Step Summary、上传 artifact，并发布
+`dailystock-results` 分支，OpenClaw 可以读取结果后贴回飞书。
 
 ## 安全边界
 
