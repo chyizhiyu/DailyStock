@@ -141,9 +141,15 @@ scripts/openclaw_trigger_actions.sh
 把脚本 stdout 原样贴回飞书即可。
 
 GitHub Actions 已配置每周五北京时间 16:30 自动执行。若希望定时任务跑完后由
-GitHub Actions 自己直接发飞书，需要在仓库 Secrets 配置
-`DAILYSTOCK_FEISHU_WEBHOOK_URL` 为飞书自定义机器人 Webhook URL。未配置该 secret
-时不会发送外部消息，仍会打印 Step Summary、上传 artifact，并发布
+GitHub Actions 自己直接发飞书，有两种 Secrets 配置方式：
+
+- 自定义机器人：配置 `DAILYSTOCK_FEISHU_WEBHOOK_URL`。
+- 飞书应用机器人：配置 `DAILYSTOCK_FEISHU_APP_ID`、
+  `DAILYSTOCK_FEISHU_APP_SECRET`、`DAILYSTOCK_FEISHU_RECEIVE_ID`。
+  `DAILYSTOCK_FEISHU_RECEIVE_ID` 默认为 `chat_id` 类型，例如飞书群的
+  `oc_...` 会话 id。
+
+未配置以上 secret 时不会发送外部消息，仍会打印 Step Summary、上传 artifact，并发布
 `dailystock-results` 分支，OpenClaw 可以读取结果后贴回飞书。
 
 ## 安全边界

@@ -246,33 +246,16 @@ jobs:
         if: always()
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.DAILYSTOCK_FEISHU_WEBHOOK_URL }}
+          FEISHU_APP_ID: ${{ secrets.DAILYSTOCK_FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.DAILYSTOCK_FEISHU_APP_SECRET }}
+          FEISHU_RECEIVE_ID: ${{ secrets.DAILYSTOCK_FEISHU_RECEIVE_ID }}
+          FEISHU_RECEIVE_ID_TYPE: chat_id
         run: |
-          if [ -z "$FEISHU_WEBHOOK_URL" ]; then
-            echo "DAILYSTOCK_FEISHU_WEBHOOK_URL secret is not configured; skipping direct Feishu send."
-            exit 0
-          fi
           if [ ! -f reports/feishu_summary.md ]; then
             echo "No Feishu summary to send."
             exit 0
           fi
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          summary = Path("reports/feishu_summary.md").read_text(encoding="utf-8")
-          payload = {
-              "msg_type": "text",
-              "content": {"text": summary[:15000]},
-          }
-          Path("reports/feishu_payload.json").write_text(
-              json.dumps(payload, ensure_ascii=False),
-              encoding="utf-8",
-          )
-          PY
-          curl -fsS -X POST \
-            -H "Content-Type: application/json" \
-            --data @reports/feishu_payload.json \
-            "$FEISHU_WEBHOOK_URL"
+          python3 scripts/send_feishu_summary.py reports/feishu_summary.md
 
       - name: Upload DailyStock artifacts
         if: always()
