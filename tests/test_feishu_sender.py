@@ -28,6 +28,8 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "DAILYSTOCK_FEISHU_APP_SECRET",
         "FEISHU_RECEIVE_ID",
         "DAILYSTOCK_FEISHU_RECEIVE_ID",
+        "FEISHU_RECEIVE_ID_TYPE",
+        "DAILYSTOCK_FEISHU_RECEIVE_ID_TYPE",
     ]:
         monkeypatch.delenv(name, raising=False)
 
@@ -51,13 +53,13 @@ def test_feishu_sender_prepares_app_api_payload_in_dry_run(
     _clear_env(monkeypatch)
     monkeypatch.setenv("DAILYSTOCK_FEISHU_APP_ID", "cli_test")
     monkeypatch.setenv("DAILYSTOCK_FEISHU_APP_SECRET", "secret")
-    monkeypatch.setenv("DAILYSTOCK_FEISHU_RECEIVE_ID", "oc_test")
+    monkeypatch.setenv("DAILYSTOCK_FEISHU_RECEIVE_ID", "ou_test")
 
     result = feishu_sender.send_feishu_summary(_summary(tmp_path), dry_run=True)
 
     assert result["mode"] == "app_api"
-    assert result["receive_id_type"] == "chat_id"
-    assert result["payload"]["receive_id"] == "oc_test"
+    assert result["receive_id_type"] == "open_id"
+    assert result["payload"]["receive_id"] == "ou_test"
     assert result["payload"]["msg_type"] == "text"
     assert "DailyStock" in result["payload"]["content"]
 

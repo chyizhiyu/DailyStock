@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 
-MAX_TEXT_CHARS = int(os.environ.get("DAILYSTOCK_FEISHU_MAX_TEXT_CHARS", "15000"))
+MAX_TEXT_CHARS = int(os.environ.get("DAILYSTOCK_FEISHU_MAX_TEXT_CHARS", "5000"))
 FEISHU_BASE_URL = os.environ.get("DAILYSTOCK_FEISHU_BASE_URL", "https://open.feishu.cn")
 
 
@@ -139,7 +139,7 @@ def send_feishu_summary(summary_path: Path, *, dry_run: bool | None = None) -> d
     receive_id_type = (
         os.environ.get("FEISHU_RECEIVE_ID_TYPE")
         or os.environ.get("DAILYSTOCK_FEISHU_RECEIVE_ID_TYPE")
-        or "chat_id"
+        or "open_id"
     )
 
     if webhook_url:

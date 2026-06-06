@@ -216,17 +216,11 @@ jobs:
               json.dumps(metadata, ensure_ascii=False, indent=2),
               encoding="utf-8",
           )
-          prefix = [
-              "# DailyStock GitHub Actions Result",
-              "",
-              f"- Tag: `{tag or '-'}`",
-              f"- Run: [#{metadata['run_number']}]({run_url})",
-              f"- Source commit: `{metadata['source_sha'][:12]}`",
-              f"- Run attempt: `{metadata['run_attempt']}`",
-              "",
-          ]
-          summary = summary_path.read_text(encoding="utf-8")
-          summary_path.write_text("\n".join(prefix) + "\n" + summary, encoding="utf-8")
+          summary = summary_path.read_text(encoding="utf-8").rstrip()
+          summary_path.write_text(
+              f"{summary}\n\n完整结果：GitHub Actions #{metadata['run_number']} {run_url}\n",
+              encoding="utf-8",
+          )
           PY
 
       - name: Print Feishu-readable summary
@@ -241,21 +235,6 @@ jobs:
           else
             echo "DailyStock did not produce a summary file." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Send Feishu bot notification
-        if: always()
-        env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.DAILYSTOCK_FEISHU_WEBHOOK_URL }}
-          FEISHU_APP_ID: ${{ secrets.DAILYSTOCK_FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.DAILYSTOCK_FEISHU_APP_SECRET }}
-          FEISHU_RECEIVE_ID: ${{ secrets.DAILYSTOCK_FEISHU_RECEIVE_ID }}
-          FEISHU_RECEIVE_ID_TYPE: chat_id
-        run: |
-          if [ ! -f reports/feishu_summary.md ]; then
-            echo "No Feishu summary to send."
-            exit 0
-          fi
-          python3 scripts/send_feishu_summary.py reports/feishu_summary.md
 
       - name: Upload DailyStock artifacts
         if: always()

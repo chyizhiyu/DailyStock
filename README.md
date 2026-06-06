@@ -44,8 +44,8 @@ Step 5 Futu Executor       selected candidates only
 - 财务质量：ROE、毛利率、净利率、资产负债率、经营现金流 / 净利润、营收 CAGR、净利润 CAGR。
 - 估值性价比：行业 5 年 PE/PB 历史分位、股息率相对行业中位数、自由现金流收益率。
 - 执行观察：买一卖一、spread bps、量能信号、是否可交易、dry-run 动作计划。
-- 飞书摘要：漏斗表、Step 5 动作统计、WATCH/BUY 清单和跳过原因，方便 OpenClaw
-  直接贴回飞书。
+- 飞书摘要：只保留结论、漏斗、分市场进度、WATCH/BUY 清单和关键风控原因；
+  完整明细继续保存在 `dashboard.md`。
 
 ## 快速开始
 
@@ -140,17 +140,19 @@ scripts/openclaw_trigger_actions.sh
 或 source commit 匹配本次触发时，才把 `latest/feishu_summary.md` 打印出来。OpenClaw
 把脚本 stdout 原样贴回飞书即可。
 
-GitHub Actions 已配置每周五北京时间 16:30 自动执行。若希望定时任务跑完后由
-GitHub Actions 自己直接发飞书，有两种 Secrets 配置方式：
+GitHub Actions 已配置每周五北京时间 16:30 自动执行。Actions 只发布结果到
+`dailystock-results`，不会直接向飞书群或其他机器人发送消息。部署在 AWS 的 clawAWS
+应在当前私聊中运行以下命令，等待本周 Actions 结果完成后把摘要回复到当前会话：
 
-- 自定义机器人：配置 `DAILYSTOCK_FEISHU_WEBHOOK_URL`。
-- 飞书应用机器人：配置 `DAILYSTOCK_FEISHU_APP_ID`、
-  `DAILYSTOCK_FEISHU_APP_SECRET`、`DAILYSTOCK_FEISHU_RECEIVE_ID`。
-  `DAILYSTOCK_FEISHU_RECEIVE_ID` 默认为 `chat_id` 类型，例如飞书群的
-  `oc_...` 会话 id。
+```bash
+cd /path/to/DailyStock
+git pull --ff-only origin main
+DAILYSTOCK_TIMEOUT_SECONDS=5400 scripts/openclaw_wait_for_scheduled_result.sh
+```
 
-未配置以上 secret 时不会发送外部消息，仍会打印 Step Summary、上传 artifact，并发布
-`dailystock-results` 分支，OpenClaw 可以读取结果后贴回飞书。
+推荐把该命令配置为 clawAWS 每周五北京时间 16:35 的 OpenClaw cron；脚本会校验
+`as_of` 和生成时间，避免误发上周结果。手动触发新扫描仍使用
+`scripts/openclaw_trigger_actions.sh`。
 
 ## 安全边界
 

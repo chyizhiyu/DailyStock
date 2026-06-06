@@ -36,6 +36,13 @@ def test_pipeline_runs_full_sample_funnel(tmp_path) -> None:
     dashboard = open(dashboard_path, encoding="utf-8").read()
     assert "## Rejection Breakdown By Market" in dashboard
     assert "| step2_hard_filters | risk_screen | 1 | 2 |" in dashboard
+    feishu_path = next(path for path in result.artifacts if path.endswith("feishu_summary.md"))
+    feishu_summary = open(feishu_path, encoding="utf-8").read()
+    assert "DailyStock 扫描结论｜2026-05-29" in feishu_summary
+    assert "结论：2只进入观察/买入池。" in feishu_summary
+    assert "市场：CN 8→3→2→1→1；HK 3→1→1→1→1" in feishu_summary
+    assert "港股：财务筛选后1只，估值筛选后1只" in feishu_summary
+    assert "| Step |" not in feishu_summary
 
 
 def test_pipeline_uses_strictest_dry_run_setting(tmp_path) -> None:
