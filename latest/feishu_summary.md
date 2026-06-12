@@ -1,7 +1,7 @@
 DailyStock 扫描结论｜2026-06-12
 结论：6只进入观察/买入池；港股无终选。
-漏斗：9729 → 2767 → 266 → 42 → 6
-市场：CN 5061→2537→234→41→6；HK 4668→230→32→1→0
+漏斗：9489 → 2767 → 266 → 42 → 6
+市场：CN 5061→2537→234→41→6；HK 4428→230→32→1→0
 
 最终观察池：
 - CN 000598 兴蓉环境｜PE 9.9x｜ROE 10.6%｜股息 3.3%
@@ -15,4 +15,4 @@ DailyStock 扫描结论｜2026-06-12
 
 风控：dry-run，仅观察，未下单；跳过36只（价差超限36）。
 
-完整结果：GitHub Actions #32 https://github.com/chyizhiyu/DailyStock/actions/runs/27404579371
+完整结果：GitHub Actions #33 https://github.com/chyizhiyu/DailyStock/actions/runs/27414206552

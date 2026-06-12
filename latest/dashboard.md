@@ -8,18 +8,18 @@
 
 | Step | Input | Output | Rejections | Seconds |
 | --- | ---: | ---: | --- | ---: |
-| step1_fetch_meta | 0 | 9729 | - | 544.137 |
-| step2_hard_filters | 9729 | 2767 | risk_screen: 2955, listing_age: 557, liquidity: 1305, market_cap: 1683, missing_financials: 24, performance_floor: 438 | 0.596 |
-| step3_financial_quality | 2767 | 266 | profitability: 2270, leverage: 45, cash_flow_quality: 104, growth: 82 | 0.065 |
-| step4_valuation | 266 | 42 | missing_valuation_data: 20, pe_valuation_percentile: 131, pb_valuation_percentile: 68, dividend_yield: 5 | 0.258 |
-| step5_futu_executor | 42 | 42 | spread_too_wide: 36 | 0.006 |
+| step1_fetch_meta | 0 | 9489 | - | 502.762 |
+| step2_hard_filters | 9489 | 2767 | risk_screen: 2875, listing_age: 557, liquidity: 1165, market_cap: 1663, missing_financials: 24, performance_floor: 438 | 0.755 |
+| step3_financial_quality | 2767 | 266 | profitability: 2269, leverage: 45, cash_flow_quality: 104, growth: 83 | 0.071 |
+| step4_valuation | 266 | 42 | missing_valuation_data: 20, pe_valuation_percentile: 131, pb_valuation_percentile: 68, dividend_yield: 5 | 0.281 |
+| step5_futu_executor | 42 | 42 | spread_too_wide: 36 | 0.007 |
 
 ## Market Coverage
 
 | Step | CN Out | CN Rejected | HK Out | HK Rejected |
 | --- | ---: | ---: | ---: | ---: |
-| step1_fetch_meta | 5061 | 0 | 4668 | 0 |
-| step2_hard_filters | 2537 | 2524 | 230 | 4438 |
+| step1_fetch_meta | 5061 | 0 | 4428 | 0 |
+| step2_hard_filters | 2537 | 2524 | 230 | 4198 |
 | step3_financial_quality | 234 | 2303 | 32 | 198 |
 | step4_valuation | 41 | 193 | 1 | 31 |
 | step5_futu_executor | 41 | 35 | 1 | 1 |
@@ -28,16 +28,16 @@
 
 | Step | Reason | CN | HK |
 | --- | --- | ---: | ---: |
-| step2_hard_filters | risk_screen | 1 | 2954 |
+| step2_hard_filters | risk_screen | 1 | 2874 |
 | step2_hard_filters | listing_age | 267 | 290 |
-| step2_hard_filters | liquidity | 378 | 927 |
-| step2_hard_filters | market_cap | 1460 | 223 |
+| step2_hard_filters | liquidity | 378 | 787 |
+| step2_hard_filters | market_cap | 1460 | 203 |
 | step2_hard_filters | missing_financials | 0 | 24 |
 | step2_hard_filters | performance_floor | 418 | 20 |
-| step3_financial_quality | profitability | 2096 | 174 |
+| step3_financial_quality | profitability | 2095 | 174 |
 | step3_financial_quality | leverage | 36 | 9 |
 | step3_financial_quality | cash_flow_quality | 98 | 6 |
-| step3_financial_quality | growth | 73 | 9 |
+| step3_financial_quality | growth | 74 | 9 |
 | step4_valuation | missing_valuation_data | 17 | 3 |
 | step4_valuation | pe_valuation_percentile | 111 | 20 |
 | step4_valuation | pb_valuation_percentile | 60 | 8 |
@@ -72,21 +72,21 @@
 | 301219 | 腾远钴业 | CN | C 制造业 | 0.1213 | 10.25 | 0.25 | 2.27 | 0.3346 | 0.01274 | 0.04286 |
 | 301303 | 真兰仪表 | CN | C 制造业 | 0.1018 | 29.46 | 0.4456 | 1.88 | 0.2278 | 0.01989 | 0.05159 |
 | 600007 | 中国国贸 | CN | SW_UNKNOWN | 0.1264 | 16.3 | 0.4113 | 1.98 | 0.3863 | 0.0541 | 0.07905 |
-| 600012 | 皖通高速 | CN | SW_UNKNOWN | 0.1401 | 13.11 | 0.3483 | 2.11 | 0.4182 | 0.0401 | 0.1259 |
+| 600012 | 皖通高速 | CN | SW_UNKNOWN | 0.1401 | 13.11 | 0.3483 | 2.11 | 0.4178 | 0.0401 | 0.1259 |
 | 600026 | 中远海能 | CN | SW_UNKNOWN | 0.1042 | 11.01 | 0.3089 | 1.99 | 0.3886 | 0.02171 | 0.07718 |
 | 600062 | 华润双鹤 | CN | SW_UNKNOWN | 0.1486 | 9.19 | 0.283 | 1.47 | 0.2506 | 0.02207 | 0.08353 |
 | 600377 | 宁沪高速 | CN | SW_UNKNOWN | 0.1148 | 11.56 | 0.3214 | 1.46 | 0.2469 | 0.03907 | 0.107 |
-| 600398 | 海澜之家 | CN | SW_UNKNOWN | 0.1231 | 7.54 | 0.2645 | 1.66 | 0.3062 | 0.06203 | 0.1566 |
+| 600398 | 海澜之家 | CN | SW_UNKNOWN | 0.1231 | 7.54 | 0.2645 | 1.66 | 0.3057 | 0.06203 | 0.1566 |
 | 600483 | 福能股份 | CN | SW_UNKNOWN | 0.1127 | 12.42 | 0.339 | 1.16 | 0.1491 | 0.0304 | 0.1583 |
 | 600897 | 厦门空港 | CN | SW_UNKNOWN | 0.1113 | 14.37 | 0.3733 | 1.36 | 0.2103 | 0.02347 | 0.1186 |
 | 600933 | 爱柯迪 | CN | SW_UNKNOWN | 0.1321 | 17.34 | 0.4224 | 1.61 | 0.2932 | 0.01877 | 0.1334 |
 | 600938 | 中国海油 | CN | SW_UNKNOWN | 0.1564 | 10.13 | 0.2974 | 1.89 | 0.3687 | 0.01489 | 0.1318 |
-| 600993 | 马应龙 | CN | SW_UNKNOWN | 0.1377 | 12.08 | 0.3321 | 2.24 | 0.4442 | 0.02937 | 0.05845 |
+| 600993 | 马应龙 | CN | SW_UNKNOWN | 0.1377 | 12.08 | 0.3321 | 2.24 | 0.4437 | 0.02937 | 0.05845 |
 | 601811 | 新华文轩 | CN | SW_UNKNOWN | 0.1048 | 14.51 | 0.3752 | 0.99 | 0.1019 | 0.03331 | 0.101 |
 | 601900 | 南方传媒 | CN | SW_UNKNOWN | 0.1219 | 8.61 | 0.277 | 1.13 | 0.1399 | 0.04774 | 0.1658 |
 | 601965 | 中国汽研 | CN | SW_UNKNOWN | 0.1431 | 21.44 | 0.4766 | 1.76 | 0.3353 | 0.01706 | 0.08696 |
-| 603568 | 伟明环保 | CN | SW_UNKNOWN | 0.1572 | 18.91 | 0.4465 | 2.33 | 0.4669 | 0.03102 | 0.09691 |
-| 603658 | 安图生物 | CN | SW_UNKNOWN | 0.1225 | 18.89 | 0.446 | 2.12 | 0.4201 | 0.03908 | 0.07511 |
+| 603568 | 伟明环保 | CN | SW_UNKNOWN | 0.1572 | 18.91 | 0.4465 | 2.33 | 0.4673 | 0.03102 | 0.09691 |
+| 603658 | 安图生物 | CN | SW_UNKNOWN | 0.1225 | 18.89 | 0.446 | 2.12 | 0.4196 | 0.03908 | 0.07511 |
 | 603816 | 顾家家居 | CN | SW_UNKNOWN | 0.1768 | 11.23 | 0.3117 | 2.01 | 0.3956 | 0.05087 | 0.1245 |
 | 605183 | 确成股份 | CN | SW_UNKNOWN | 0.1407 | 19.31 | 0.4502 | 1.69 | 0.3154 | 0.02712 | 0.09337 |
 | 03933 | 联邦制药 | HK | 药品及生物科技 | 0.1313 | 7.48 | 0.4167 | 0.9 | 0.3208 | 0.06603 | 0.217 |

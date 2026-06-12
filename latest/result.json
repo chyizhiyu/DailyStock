@@ -1004,7 +1004,7 @@
       "dividend_yield": 0.0400972053,
       "fcf_yield": 0.1258556982,
       "pe_percentile": 0.3483094025,
-      "pb_percentile": 0.4182491894,
+      "pb_percentile": 0.417786012,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106
     },
@@ -1164,7 +1164,7 @@
       "dividend_yield": 0.0620272315,
       "fcf_yield": 0.1565959146,
       "pe_percentile": 0.2644742937,
-      "pb_percentile": 0.3061602594,
+      "pb_percentile": 0.305697082,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106
     },
@@ -1364,7 +1364,7 @@
       "dividend_yield": 0.0293747377,
       "fcf_yield": 0.0584540036,
       "pe_percentile": 0.3320981936,
-      "pb_percentile": 0.4441871237,
+      "pb_percentile": 0.4437239463,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106
     },
@@ -1524,7 +1524,7 @@
       "dividend_yield": 0.0310237849,
       "fcf_yield": 0.0969143354,
       "pe_percentile": 0.4465030107,
-      "pb_percentile": 0.4668828161,
+      "pb_percentile": 0.4673459935,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106
     },
@@ -1564,7 +1564,7 @@
       "dividend_yield": 0.0390811456,
       "fcf_yield": 0.0751106434,
       "pe_percentile": 0.4460398333,
-      "pb_percentile": 0.420101899,
+      "pb_percentile": 0.4196387216,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106
     },
@@ -1685,7 +1685,7 @@
       "fcf_yield": 0.216956864,
       "pe_percentile": 0.4166666667,
       "pb_percentile": 0.320754717,
-      "industry_dividend_median": 0.01723801,
+      "industry_dividend_median": 0.01725139,
       "industry_dividend_count": 5
     }
   ],
@@ -1693,12 +1693,12 @@
     {
       "name": "step1_fetch_meta",
       "input_count": 0,
-      "output_count": 9729,
-      "elapsed_seconds": 544.1367067580001,
+      "output_count": 9489,
+      "elapsed_seconds": 502.76247350399996,
       "rejection_counts": {},
       "output_market_counts": {
         "CN": 5061,
-        "HK": 4668
+        "HK": 4428
       },
       "rejected_market_counts": {},
       "rejection_market_counts": {},
@@ -1708,14 +1708,14 @@
     },
     {
       "name": "step2_hard_filters",
-      "input_count": 9729,
+      "input_count": 9489,
       "output_count": 2767,
-      "elapsed_seconds": 0.5960847079998075,
+      "elapsed_seconds": 0.7548652939999556,
       "rejection_counts": {
-        "risk_screen": 2955,
+        "risk_screen": 2875,
         "listing_age": 557,
-        "liquidity": 1305,
-        "market_cap": 1683,
+        "liquidity": 1165,
+        "market_cap": 1663,
         "missing_financials": 24,
         "performance_floor": 438
       },
@@ -1724,13 +1724,13 @@
         "HK": 230
       },
       "rejected_market_counts": {
-        "HK": 4438,
+        "HK": 4198,
         "CN": 2524
       },
       "rejection_market_counts": {
         "liquidity": {
           "CN": 378,
-          "HK": 927
+          "HK": 787
         },
         "listing_age": {
           "CN": 267,
@@ -1738,7 +1738,7 @@
         },
         "market_cap": {
           "CN": 1460,
-          "HK": 223
+          "HK": 203
         },
         "missing_financials": {
           "HK": 24
@@ -1749,7 +1749,7 @@
         },
         "risk_screen": {
           "CN": 1,
-          "HK": 2954
+          "HK": 2874
         }
       },
       "artifacts": [
@@ -1761,12 +1761,12 @@
       "name": "step3_financial_quality",
       "input_count": 2767,
       "output_count": 266,
-      "elapsed_seconds": 0.06483598699992399,
+      "elapsed_seconds": 0.07091235699999743,
       "rejection_counts": {
-        "profitability": 2270,
+        "profitability": 2269,
         "leverage": 45,
         "cash_flow_quality": 104,
-        "growth": 82
+        "growth": 83
       },
       "output_market_counts": {
         "CN": 234,
@@ -1782,7 +1782,7 @@
           "HK": 6
         },
         "growth": {
-          "CN": 73,
+          "CN": 74,
           "HK": 9
         },
         "leverage": {
@@ -1790,7 +1790,7 @@
           "HK": 9
         },
         "profitability": {
-          "CN": 2096,
+          "CN": 2095,
           "HK": 174
         }
       },
@@ -1803,7 +1803,7 @@
       "name": "step4_valuation",
       "input_count": 266,
       "output_count": 42,
-      "elapsed_seconds": 0.2584421819999534,
+      "elapsed_seconds": 0.280518180999934,
       "rejection_counts": {
         "missing_valuation_data": 20,
         "pe_valuation_percentile": 131,
@@ -1844,7 +1844,7 @@
       "name": "step5_futu_executor",
       "input_count": 42,
       "output_count": 42,
-      "elapsed_seconds": 0.006312744999831921,
+      "elapsed_seconds": 0.007086323999828892,
       "rejection_counts": {
         "spread_too_wide": 36
       },
@@ -3177,7 +3177,7 @@
       "dividend_yield": 0.0400972053,
       "fcf_yield": 0.1258556982,
       "pe_percentile": 0.3483094025,
-      "pb_percentile": 0.4182491894,
+      "pb_percentile": 0.417786012,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106,
       "bid": 2.797,
@@ -3389,7 +3389,7 @@
       "dividend_yield": 0.0620272315,
       "fcf_yield": 0.1565959146,
       "pe_percentile": 0.2644742937,
-      "pb_percentile": 0.3061602594,
+      "pb_percentile": 0.305697082,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106,
       "bid": 2.845,
@@ -3654,7 +3654,7 @@
       "dividend_yield": 0.0293747377,
       "fcf_yield": 0.0584540036,
       "pe_percentile": 0.3320981936,
-      "pb_percentile": 0.4441871237,
+      "pb_percentile": 0.4437239463,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106,
       "bid": 1.02,
@@ -3866,7 +3866,7 @@
       "dividend_yield": 0.0310237849,
       "fcf_yield": 0.0969143354,
       "pe_percentile": 0.4465030107,
-      "pb_percentile": 0.4668828161,
+      "pb_percentile": 0.4673459935,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106,
       "bid": 3.298,
@@ -3919,7 +3919,7 @@
       "dividend_yield": 0.0390811456,
       "fcf_yield": 0.0751106434,
       "pe_percentile": 0.4460398333,
-      "pb_percentile": 0.420101899,
+      "pb_percentile": 0.4196387216,
       "industry_dividend_median": 0.0106471783,
       "industry_dividend_count": 106,
       "bid": 1.772,
@@ -4079,7 +4079,7 @@
       "fcf_yield": 0.216956864,
       "pe_percentile": 0.4166666667,
       "pb_percentile": 0.320754717,
-      "industry_dividend_median": 0.01723801,
+      "industry_dividend_median": 0.01725139,
       "industry_dividend_count": 5,
       "bid": 1.713,
       "ask": 1.743,
